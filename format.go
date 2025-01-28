@@ -12,17 +12,7 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-func writeDecls(decls []ast.Decl, filename string) {
-	fset := token.NewFileSet()
-	//f, _ := parser.ParseFile(fset, filename, "package pack", parser.SkipObjectResolution)
-
-	//f.Decls = decls
-
-	f := &ast.File{
-		Name:  &ast.Ident{Name: "main"},
-		Decls: decls,
-	}
-
+func writeAST(f *ast.File, fset *token.FileSet, filename string) {
 	buf := &bytes.Buffer{}
 	if err := format.Node(buf, fset, f); err != nil {
 		log.Fatal(err)

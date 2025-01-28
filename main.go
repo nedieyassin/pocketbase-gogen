@@ -11,10 +11,20 @@ import (
 func main() {
 	loadTemplateASTs()
 	loadRecordGetters()
-	//printAST("example/example.go")
 
-	decls := proxiesFromGoFile("example/example.go")
-	writeDecls(decls, "example_proxies.go")
+	/*
+		collections := parseSchemaJson([]byte(example.JsonData), false)
+		t := newSchemaTranslator(collections)
+		decls := t.translate()
+		f := writeCollectionStructs(decls, "example")
+		f, fset := astpos.RewritePositions(f)
+		writeAST(f, fset, "example/example_prelim.go")
+
+		decls = proxiesFromGoFile("example/example_prelim.go")
+		f = writeProxyStructs(decls, "example")
+		f, fset = astpos.RewritePositions(f)
+		writeAST(f, fset, "example/example_proxies.go")
+	*/
 }
 
 func printAST(filename string) {
