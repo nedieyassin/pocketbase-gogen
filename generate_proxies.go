@@ -268,10 +268,10 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 func (p *Parser) trailingUnderscoreName(field *ast.Field) string {
 	tuName := ""
 	for _, n := range field.Names {
-		name := n.Name
-
-		if len(name) > 1 && name[len(name)-1] == '_' {
-			tuName = name[:len(name)-1]
+		trimmed, ok := trimUnderscore(n.Name)
+		if ok {
+			tuName = trimmed
+			break
 		}
 	}
 	if tuName != "" && len(field.Names) > 1 {
@@ -338,4 +338,14 @@ func structSpec(n ast.Node) *ast.TypeSpec {
 		return nil
 	}
 	return structSpec
+}
+
+// Removes one trailing underscore from a string
+// if present and returns it with true.
+// Otherwise returns "" and false.
+func trimUnderscore(s string) (string, bool) {
+	if len(s) > 1 && s[len(s)-1] == '_' {
+		return s[:len(s)-1], true
+	}
+	return "", false
 }
