@@ -69,19 +69,7 @@ func (t *SchemaTranslator) translateFields(collection *core.Collection) *ast.Fie
 }
 
 func (t *SchemaTranslator) translateField(field core.Field) *ast.Field {
-	fieldName := field.GetName()
-	parsed, err := parser.ParseExpr(fieldName)
-	ident, ok := parsed.(*ast.Ident)
-	// This check fails when the field name is a reserved go keyword
-	if err != nil || !ok {
-		fieldName += "_"
-		parsed, err = parser.ParseExpr(fieldName)
-		ident, ok = parsed.(*ast.Ident)
-	}
-	if err != nil || !ok {
-		log.Fatalf("Error: Could not parse collection field name `%v`", field.GetName())
-	}
-
+	ident := toIdentifier(field.GetName())
 	f := &ast.Field{
 		Doc: createSelectTypeComment(field),
 		Names: []*ast.Ident{
@@ -152,6 +140,7 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 	sb.WriteString(selectTypeName)
 	sb.WriteString("(")
 	for i, o := range selectOptions {
+		o = validateIdentifier(o)
 		sb.WriteString(o)
 		if i < len(selectOptions)-1 {
 			sb.WriteString(", ")
@@ -165,6 +154,32 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 		}},
 	}
 	return comment
+}
+
+func toIdentifier(s string) *ast.Ident {
+	validated := validateIdentifier(s)
+	return ast.NewIdent(validated)
+}
+
+// Validates if the given string s can be used
+// as an identifier in go source code.
+// If not, it appends a '_' and checks again.
+// Errors if the string is still not valid.
+func validateIdentifier(s string) string {
+	origS := s
+	parsed, err := parser.ParseExpr(s)
+	_, ok := parsed.(*ast.Ident)
+	// This check fails e.g. when the field name is a reserved go keyword
+	if err != nil || !ok {
+		s += "_" // Add a _ to circumvent the reservation
+		parsed, err = parser.ParseExpr(s)
+		_, ok = parsed.(*ast.Ident)
+	}
+	if err != nil || !ok {
+		log.Fatalf("Error: Encoutered `%v`, which can not be used as a go identifier", origS)
+	}
+
+	return s
 }
 
 func wrapTemplateDeclarations(decls []ast.Decl, packageName string) *ast.File {

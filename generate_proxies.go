@@ -229,7 +229,8 @@ func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, 
 		case "Fun":
 			typeName = ident.Name
 		case "Args":
-			selectOptions = append(selectOptions, ident.Name)
+			selectOption, _ := trimUnderscore(ident.Name)
+			selectOptions = append(selectOptions, selectOption)
 			if !withVarNames {
 				varName := strcase.ToCamel(ident.Name)
 				selectVarNames = append(selectVarNames, varName)
@@ -467,10 +468,10 @@ func structSpec(n ast.Node) *ast.TypeSpec {
 
 // Removes one trailing underscore from a string
 // if present and returns it with true.
-// Otherwise returns "" and false.
+// Otherwise returns s and false.
 func trimUnderscore(s string) (string, bool) {
 	if len(s) > 1 && s[len(s)-1] == '_' {
 		return s[:len(s)-1], true
 	}
-	return "", false
+	return s, false
 }
