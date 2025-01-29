@@ -68,16 +68,17 @@ type Parser struct {
 	structNames map[string]*ast.TypeSpec
 
 	// Tracks the number of declarations per select type name
-	// to prevent multi-declaration of the same ones
-	selectTypeNames   map[string]int
-	selectTypeOptions map[string][]string
+	// to prevent duplication
+	selectTypeDups      map[string]int
+	selectTypeToOptions map[string][]string
+	optionsToSelectType map[string]string
 }
 
 func newParser(filename string) *Parser {
 	parser := &Parser{
-		Filename:          filename,
-		selectTypeNames:   map[string]int{},
-		selectTypeOptions: map[string][]string{},
+		Filename:            filename,
+		selectTypeDups:      map[string]int{},
+		selectTypeToOptions: map[string][]string{},
 	}
 	parser.parseFile()
 	parser.collectStructSpecs()
@@ -216,19 +217,29 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string) {
 		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)", pos, -1, nil)
 	}
 
-	baseTypeName := typeName
-	numEqDecls := p.selectTypeNames[typeName]
-	if numEqDecls > 0 {
-		otherOpts := p.selectTypeOptions[typeName]
-		if slices.Equal(selectOptions, otherOpts) {
-			// Another field already defined the same select type
-			return typeName, []string{}
-		}
+	typeName, selectOptions = p.validateSelectType(field, typeName, selectOptions)
 
-		typeName = fmt.Sprintf("%v%v", typeName, numEqDecls+1)
+	return typeName, selectOptions
+}
+
+func (p *Parser) validateSelectType(field *ast.Field, typeName string, selectOptions []string) (string, []string) {
+	baseTypeName := typeName
+	numDuplicates := p.selectTypeDups[typeName]
+	if numDuplicates > 0 {
+		otherOpts := p.selectTypeToOptions[typeName]
+		if slices.Equal(selectOptions, otherOpts) {
+			// Another field already defined the same select type. Reuse.
+			return typeName, []string{}
+		} else {
+			// Another field has a duplicate name but different select options. Rename this one.
+			typeName = fmt.Sprintf("%v%v", typeName, numDuplicates+1)
+			pos := p.Fset.Position(field.Pos())
+			warnMsg := fmt.Sprintf("Found a duplicate select type name: %v. Renaming to %v", baseTypeName, typeName)
+			p.logWarning(warnMsg, pos, -1, nil)
+		}
 	}
-	p.selectTypeNames[baseTypeName] = numEqDecls + 1
-	p.selectTypeOptions[typeName] = selectOptions
+	p.selectTypeDups[baseTypeName] = numDuplicates + 1
+	p.selectTypeToOptions[typeName] = selectOptions
 
 	return typeName, selectOptions
 }
