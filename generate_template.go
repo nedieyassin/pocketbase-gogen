@@ -167,7 +167,7 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 	return comment
 }
 
-func writeCollectionStructs(decls []ast.Decl, packageName string) *ast.File {
+func wrapTemplateDeclarations(decls []ast.Decl, packageName string) *ast.File {
 	f := &ast.File{
 		Doc:   newInfoComment(),
 		Name:  ast.NewIdent(packageName),
