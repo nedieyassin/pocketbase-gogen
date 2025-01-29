@@ -2,3 +2,4 @@ example/*
 example_proxies.go
 *.exe
 *.txt
+.vscode

@@ -1,4 +1,4 @@
-package main
+package generator
 
 // Even though the method set of pocketbase's core structs
 // is unlikely to change, this file contains functions to

@@ -1,4 +1,4 @@
-package main
+package generator
 
 // DO NOT EDIT
 // (unless you know what you are doing of course)

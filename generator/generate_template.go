@@ -1,7 +1,6 @@
-package main
+package generator
 
 import (
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,7 +9,24 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/snonky/astpos/astpos"
 )
+
+// Generates the template and returns the source code bytes
+func Template(collections []*core.Collection, savePath, packageName string) []byte {
+	if !validatePackageName(packageName) {
+		log.Fatalf("The package name %v is not valid.", packageName)
+	}
+
+	translator := newSchemaTranslator(collections)
+	decls := translator.translate()
+	f := wrapTemplateDeclarations(decls, packageName)
+
+	f, fset := astpos.RewritePositions(f)
+	sourceCode := printAST(f, fset, savePath)
+
+	return sourceCode
+}
 
 type SchemaTranslator struct {
 	collections   []*core.Collection
@@ -156,32 +172,6 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 	return comment
 }
 
-func toIdentifier(s string) *ast.Ident {
-	validated := validateIdentifier(s)
-	return ast.NewIdent(validated)
-}
-
-// Validates if the given string s can be used
-// as an identifier in go source code.
-// If not, it appends a '_' and checks again.
-// Errors if the string is still not valid.
-func validateIdentifier(s string) string {
-	origS := s
-	parsed, err := parser.ParseExpr(s)
-	_, ok := parsed.(*ast.Ident)
-	// This check fails e.g. when the field name is a reserved go keyword
-	if err != nil || !ok {
-		s += "_" // Add a _ to circumvent the reservation
-		parsed, err = parser.ParseExpr(s)
-		_, ok = parsed.(*ast.Ident)
-	}
-	if err != nil || !ok {
-		log.Fatalf("Error: Encoutered `%v`, which can not be used as a go identifier", origS)
-	}
-
-	return s
-}
-
 func wrapTemplateDeclarations(decls []ast.Decl, packageName string) *ast.File {
 	f := &ast.File{
 		Doc:   newInfoComment(),
@@ -216,24 +206,4 @@ func newInfoComment() *ast.CommentGroup {
 			{Text: "// subsequent runs of the generator."},
 		},
 	}
-}
-
-func parseSchemaJson(rawJson []byte, includeSystem bool) []*core.Collection {
-	data := []map[string]any{}
-	json.Unmarshal(rawJson, &data)
-
-	collections := make([]*core.Collection, 0, len(data))
-	for _, cData := range data {
-		rawData, err := json.Marshal(cData)
-		if err != nil {
-			log.Fatalf("Error while parsing pocketbase schema json: %v", err)
-		}
-		collection := &core.Collection{}
-		json.Unmarshal(rawData, collection)
-		if !collection.System || includeSystem {
-			collections = append(collections, collection)
-		}
-	}
-
-	return collections
 }

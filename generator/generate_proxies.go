@@ -1,4 +1,4 @@
-package main
+package generator
 
 import (
 	"fmt"
@@ -11,8 +11,26 @@ import (
 	"strings"
 
 	"github.com/iancoleman/strcase"
+	"github.com/snonky/astpos/astpos"
 	"golang.org/x/tools/go/ast/astutil"
 )
+
+func Generate(template []byte, savePath, packageName string) []byte {
+	if !validatePackageName(packageName) {
+		log.Fatalf("The package name %v is not valid.", packageName)
+	}
+
+	loadTemplateASTs()
+	loadRecordGetters()
+
+	decls := proxiesFromGoTemplate(template)
+	f := wrapProxyDeclarations(decls, packageName)
+
+	f, fset := astpos.RewritePositions(f)
+	sourceCode := printAST(f, fset, savePath)
+
+	return sourceCode
+}
 
 func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
 	infoComment := &ast.CommentGroup{
@@ -29,14 +47,14 @@ func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
 	return f
 }
 
-// Parses a go file and creates a proxy for every
+// Parses a go template file and creates a proxy for every
 // struct that is found in it.
 // Each proxy has a getter/setter for each field
-// in the original struct.
+// in the template struct.
 // Fields with an unknown type are ignored with
 // a warning.
-func proxiesFromGoFile(filename string) []ast.Decl {
-	p := newParser(filename)
+func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
+	p := newParser(sourceCode)
 	structs := p.structSpecs
 
 	decls := make([]ast.Decl, 0, 25)
@@ -60,7 +78,7 @@ func proxiesFromGoFile(filename string) []ast.Decl {
 }
 
 type Parser struct {
-	Filename string
+	sourceCode []byte
 
 	Fset *token.FileSet
 	fAst *ast.File
@@ -77,9 +95,9 @@ type Parser struct {
 	varToSelectType      map[string]string
 }
 
-func newParser(filename string) *Parser {
+func newParser(sourceCode []byte) *Parser {
 	parser := &Parser{
-		Filename:             filename,
+		sourceCode:           sourceCode,
 		selectTypeDups:       map[string]any{},
 		selectVarDups:        map[string]any{},
 		selectTypeToOptions:  map[string][]string{},
@@ -96,7 +114,7 @@ func (p *Parser) parseFile() {
 
 	opts := parser.SkipObjectResolution |
 		parser.ParseComments
-	f, err := parser.ParseFile(p.Fset, p.Filename, nil, opts)
+	f, err := parser.ParseFile(p.Fset, "x.go", p.sourceCode, opts)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,0 +1,100 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/snonky/pocketbase-gogen/generator"
+	"github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "pocketbase-gogen",
+	Short: "Code Generator for PocketBase",
+	Long: `Creates type safe proxies for PocketBase
+	
+This tool is for go developers who use PocketBase as their backend framework and would like type safe access to their data.
+It takes in a PocketBase schema and generates a proxy struct for each collection with getters and setters for all fields.`,
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true,
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(cmd.Use)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(templateCmd)
+	rootCmd.AddCommand(generateCmd)
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func errCheck(err error) {
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func dirNameFromFilePath(path string) string {
+	absPath, err := filepath.Abs(path)
+	errCheck(err)
+	dirPath := filepath.Dir(absPath)
+	dirName := filepath.Base(dirPath)
+	return dirName
+}
+
+// Returns true when the import path goes to a directory
+// with *.db files. False when its a .json file.
+func checkSchemaImportPath(path string) bool {
+	inFileInfo, err := os.Stat(path)
+	errCheck(err)
+	isDir := inFileInfo.IsDir()
+
+	if !isDir && filepath.Ext(path) != ".json" {
+		fmt.Println("The input path leads to a file but it is not a *.json file.")
+		os.Exit(1)
+	}
+
+	if isDir {
+		files, err := os.ReadDir(path)
+		errCheck(err)
+
+		dbPresent := false
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			if f.Name() == "data.db" {
+				dbPresent = true
+				break
+			}
+		}
+
+		if !dbPresent {
+			fmt.Println("The input directory path does not contain the data.db file of PocketBase")
+			os.Exit(1)
+		}
+	}
+
+	return isDir
+}
+
+func importSchema(dataSourcePath string) []*core.Collection {
+	viaPB := checkSchemaImportPath(dataSourcePath)
+	var collections []*core.Collection
+	if viaPB {
+		collections = generator.QuerySchema(dataSourcePath, false)
+	} else {
+		collections = generator.ParseSchemaJson(dataSourcePath, false)
+	}
+	return collections
+}
