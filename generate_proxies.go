@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -67,18 +68,23 @@ type Parser struct {
 	structSpecs []*ast.TypeSpec
 	structNames map[string]*ast.TypeSpec
 
-	// Tracks the number of declarations per select type name
-	// to prevent duplication
-	selectTypeDups      map[string]int
-	selectTypeToOptions map[string][]string
-	optionsToSelectType map[string]string
+	// Tracks the declarations of select-typing related
+	// names to prevent duplication
+	selectTypeDups       map[string]any
+	selectVarDups        map[string]any
+	selectTypeToOptions  map[string][]string
+	selectTypeToVarNames map[string][]string
+	varToSelectType      map[string]string
 }
 
 func newParser(filename string) *Parser {
 	parser := &Parser{
-		Filename:            filename,
-		selectTypeDups:      map[string]int{},
-		selectTypeToOptions: map[string][]string{},
+		Filename:             filename,
+		selectTypeDups:       map[string]any{},
+		selectVarDups:        map[string]any{},
+		selectTypeToOptions:  map[string][]string{},
+		selectTypeToVarNames: map[string][]string{},
+		varToSelectType:      map[string]string{},
 	}
 	parser.parseFile()
 	parser.collectStructSpecs()
@@ -131,7 +137,7 @@ func (p *Parser) extractStructFields(structSpec *ast.TypeSpec) []*Field {
 func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field {
 	fieldType := field.Type
 
-	selectTypeName, selectOptions := p.parseSelectTypeComment(field)
+	selectTypeName, selectOptions, selectVarNames := p.parseSelectTypeComment(field)
 	schemaName := p.parseAlternativeSchemaName(field)
 	if schemaName == "" {
 		schemaName = field.Names[0].Name
@@ -147,6 +153,7 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 			fieldType,
 			selectTypeName,
 			selectOptions,
+			selectVarNames,
 			p.structNames,
 			field,
 			p,
@@ -159,44 +166,60 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 
 var selectTypeComment = "// select:"
 
-func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string) {
+func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string, []string) {
 	if field.Doc == nil || len(field.Doc.List) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	comment := ""
+	var astComment *ast.Comment
 	for _, c := range field.Doc.List {
 		if c.Text[:len(selectTypeComment)] == selectTypeComment {
 			comment = c.Text
+			astComment = c
 			break
 		}
 	}
 	if comment == "" {
-		return "", nil
+		return "", nil, nil
 	}
 
 	if nodeString(baseType(field.Type)) != "int" {
-		pos := p.Fset.Position(field.Pos())
-		p.logError("Cannot have // select: comment on field of type other than int or []int", pos, -1, nil)
+		pos := p.Fset.Position(astComment.Slash)
+		p.logError("Cannot have // select: comment on field of type other than int or []int", pos, nil)
 	}
 
 	if len(field.Names) > 1 {
-		pos := p.Fset.Position(field.Pos())
+		pos := p.Fset.Position(astComment.Slash)
 		errMsg := fmt.Sprintf("The // select: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, -1, nil)
+		p.logError(errMsg, pos, nil)
 	}
 
 	comment = strings.TrimSpace(comment[len(selectTypeComment):])
-	parsed, err := parser.ParseExpr(comment)
+
+	typeName, selectOptions, selectVarNames := p.parseSelectType(astComment.Slash, comment)
+	typeName, selectOptions, selectVarNames = p.validateSelectType(astComment.Slash, typeName, selectOptions, selectVarNames)
+
+	return typeName, selectOptions, selectVarNames
+}
+
+// Parses a string of the form 'TypeName(option1, option2, ...)' or
+// 'TypeName(option1, option2, ...)[VarName1, VarName2, ...]
+// Returns the [TypeName], the [option1, option1, ...] list and the [VarName1, VarName2, ...] list.
+// If the var name list is omitted the option names are reused as the var names.
+func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, []string, []string) {
+	parsed, err := parser.ParseExpr(typeStr)
 	if err != nil {
 		parserErr := err.(scanner.ErrorList)[0]
-		pos := p.Fset.Position(field.Pos())
-		p.logError(parserErr.Msg, pos, -1, parserErr)
+		pos := p.Fset.Position(commentPos)
+		p.logError(parserErr.Msg, pos, parserErr)
 	}
+
+	withVarNames := p.checkBrackets(commentPos, parsed)
 
 	typeName := ""
 	selectOptions := make([]string, 0, 8)
-
+	selectVarNames := make([]string, 0, 8)
 	identFinder := func(c *astutil.Cursor) bool {
 		ident, ok := c.Node().(*ast.Ident)
 		if !ok {
@@ -207,41 +230,120 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string) {
 			typeName = ident.Name
 		case "Args":
 			selectOptions = append(selectOptions, ident.Name)
+			if !withVarNames {
+				varName := strcase.ToCamel(ident.Name)
+				selectVarNames = append(selectVarNames, varName)
+			}
+		case "Index":
+			fallthrough
+		case "Indices":
+			varName := strcase.ToCamel(ident.Name)
+			selectVarNames = append(selectVarNames, varName)
 		}
 		return true
 	}
 	astutil.Apply(parsed, identFinder, nil)
 
 	if typeName == "" || len(selectOptions) == 0 {
-		pos := p.Fset.Position(field.Pos())
-		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)", pos, -1, nil)
+		pos := p.Fset.Position(commentPos)
+		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
 	}
 
-	typeName, selectOptions = p.validateSelectType(field, typeName, selectOptions)
+	if len(selectOptions) != len(selectVarNames) {
+		pos := p.Fset.Position(commentPos)
+		errMsg := fmt.Sprintf(
+			"Unequal number of select options and variable names in // select: comment. Found %v options and %v names",
+			len(selectOptions),
+			len(selectVarNames),
+		)
+		p.logError(errMsg, pos, nil)
+	}
 
-	return typeName, selectOptions
+	return typeName, selectOptions, selectVarNames
 }
 
-func (p *Parser) validateSelectType(field *ast.Field, typeName string, selectOptions []string) (string, []string) {
-	baseTypeName := typeName
-	numDuplicates := p.selectTypeDups[typeName]
-	if numDuplicates > 0 {
+// Checks if the // select: comment only has () or also includes []
+// Errors if neither are found. Returns true when the [] are present.
+func (p *Parser) checkBrackets(commentPos token.Pos, parsedComment ast.Node) bool {
+	var indexExpr ast.Expr
+	var callExpr ast.Expr
+
+	switch n := parsedComment.(type) {
+	case *ast.IndexExpr:
+		indexExpr = n
+		callExpr = n.X
+	case *ast.IndexListExpr:
+		indexExpr = n
+		callExpr = n.X
+	case *ast.CallExpr:
+		callExpr = n
+	}
+
+	withVarNames := indexExpr != nil
+	withOpts := callExpr != nil
+	if !withVarNames && !withOpts {
+		pos := p.Fset.Position(commentPos)
+		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
+	}
+
+	return withVarNames
+}
+
+func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selectOptions, selectVarNames []string) (string, []string, []string) {
+	origName := typeName
+	_, isDuplicate := p.selectTypeDups[typeName]
+
+	if isDuplicate {
 		otherOpts := p.selectTypeToOptions[typeName]
-		if slices.Equal(selectOptions, otherOpts) {
+		otherVars := p.selectTypeToVarNames[typeName]
+		if slices.Equal(selectOptions, otherOpts) && slices.Equal(selectVarNames, otherVars) {
 			// Another field already defined the same select type. Reuse.
-			return typeName, []string{}
+			return typeName, []string{}, []string{}
 		} else {
 			// Another field has a duplicate name but different select options. Rename this one.
-			typeName = fmt.Sprintf("%v%v", typeName, numDuplicates+1)
-			pos := p.Fset.Position(field.Pos())
-			warnMsg := fmt.Sprintf("Found a duplicate select type name: %v. Renaming to %v", baseTypeName, typeName)
-			p.logWarning(warnMsg, pos, -1, nil)
+			typeName = rename(typeName, p.selectTypeDups)
+
+			pos := p.Fset.Position(commentPos)
+			warnMsg := fmt.Sprintf("Found a duplicate select type name: %v. Renaming to %v", origName, typeName)
+			p.logWarning(warnMsg, pos, nil)
 		}
 	}
-	p.selectTypeDups[baseTypeName] = numDuplicates + 1
-	p.selectTypeToOptions[typeName] = selectOptions
 
-	return typeName, selectOptions
+	p.selectTypeDups[typeName] = struct{}{}
+	p.selectTypeToOptions[typeName] = selectOptions
+	p.selectTypeToVarNames[typeName] = selectVarNames
+
+	selectVarNames = p.checkSelectVarNameDuplicates(commentPos, typeName, selectVarNames)
+
+	return typeName, selectOptions, selectVarNames
+}
+
+func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, typeName string, selectVarNames []string) []string {
+	checkedNames := make([]string, len(selectVarNames))
+
+	for i, name := range selectVarNames {
+		origName := name
+		_, isDuplicate := p.selectVarDups[name]
+
+		if isDuplicate {
+			name = rename(name, p.selectVarDups)
+
+			origOwner := p.varToSelectType[origName]
+			pos := p.Fset.Position(commentPos)
+			warnMsg := fmt.Sprintf(
+				"Found a duplicate select variable name. %v is already in %v. Renaming to %v.",
+				origName, origOwner, name,
+			)
+			p.logWarning(warnMsg, pos, nil)
+		}
+
+		p.selectVarDups[name] = struct{}{}
+		p.varToSelectType[name] = typeName
+
+		checkedNames[i] = name
+	}
+
+	return checkedNames
 }
 
 var schemaNameComment = "// schema-name:"
@@ -252,9 +354,11 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 	}
 
 	comment := ""
+	var astComment *ast.Comment
 	for _, c := range field.Doc.List {
 		if c.Text[:len(schemaNameComment)] == schemaNameComment {
 			comment = c.Text
+			astComment = c
 			break
 		}
 	}
@@ -263,9 +367,9 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 	}
 
 	if len(field.Names) > 1 {
-		pos := p.Fset.Position(field.Pos())
+		pos := p.Fset.Position(astComment.Slash)
 		errMsg := fmt.Sprintf("The // schema-name: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, 0, nil)
+		p.logError(errMsg, pos, nil)
 	}
 
 	schemaname := strings.TrimSpace(comment[len(schemaNameComment):])
@@ -288,25 +392,35 @@ func (p *Parser) trailingUnderscoreName(field *ast.Field) string {
 	if tuName != "" && len(field.Names) > 1 {
 		pos := p.Fset.Position(field.Pos())
 		errMsg := fmt.Sprintf("Trailing underscore identifiers can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, 0, nil)
+		p.logError(errMsg, pos, nil)
 	}
 	return tuName
 }
 
-func (p *Parser) logError(msg string, pos token.Position, lineOffset int, origErr *scanner.Error) {
+func (p *Parser) logError(msg string, pos token.Position, origErr *scanner.Error) {
 	if origErr != nil {
 		pos.Column = origErr.Pos.Column
 	}
-	pos.Line += lineOffset
 	log.Fatalf("Error: %v: %v", pos, msg)
-
 }
-func (p *Parser) logWarning(msg string, pos token.Position, lineOffset int, origErr *scanner.Error) {
+
+func (p *Parser) logWarning(msg string, pos token.Position, origErr *scanner.Error) {
 	if origErr != nil {
 		pos.Column = origErr.Pos.Column
 	}
-	pos.Line += lineOffset
 	log.Printf("Warning: %v: %v", pos, msg)
+}
+
+func rename(name string, existingNames map[string]any) string {
+	newName := name
+	for i := 2; ; i += 1 {
+		newName = fmt.Sprintf("%v%v", name, i)
+		_, isDuplicate := existingNames[newName]
+		if !isDuplicate {
+			break
+		}
+	}
+	return newName
 }
 
 func createFuncs(fields []*Field, declare func(f *Field) *ast.FuncDecl) []*ast.FuncDecl {

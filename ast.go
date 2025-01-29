@@ -43,6 +43,7 @@ type Field struct {
 
 	selectTypeName string
 	selectOptions  []string
+	selectVarNames []string
 
 	allProxyNames map[string]*ast.TypeSpec
 
@@ -57,6 +58,7 @@ func newField(
 	fieldType ast.Expr,
 	selectTypeName string,
 	selectOptions []string,
+	selectVarNames []string,
 	allProxyNames map[string]*ast.TypeSpec,
 	astOriginal *ast.Field,
 	parser *Parser,
@@ -68,6 +70,7 @@ func newField(
 		fieldType:      fieldType,
 		selectTypeName: selectTypeName,
 		selectOptions:  selectOptions,
+		selectVarNames: selectVarNames,
 		allProxyNames:  allProxyNames,
 		astOriginal:    astOriginal,
 		parser:         parser,
@@ -147,8 +150,11 @@ func newRelGetterDecl(field *Field) *ast.FuncDecl {
 	if !ok {
 		returnTypeName := nodeString(fieldType)
 		pos := field.parser.Fset.Position(field.astOriginal.Pos())
-		errMsg := fmt.Sprintf("Unable to generate relation getter/setter for field `%v` of type %v.", fieldName, returnTypeName)
-		field.parser.logWarning(errMsg, pos, 0, nil)
+		errMsg := fmt.Sprintf(
+			"Unable to generate relation getter/setter for field `%v` of type %v. All relation fields must have the related type also be a proxy.",
+			fieldName, returnTypeName,
+		)
+		field.parser.logWarning(errMsg, pos, nil)
 		return nil
 	}
 
@@ -325,18 +331,18 @@ func newSelectTypeDecl(name string) *ast.GenDecl {
 
 func newSelectConstDecl(field *Field) *ast.GenDecl {
 	typeName := field.selectTypeName
-	options := field.selectOptions
+	varNames := field.selectVarNames
 
-	if len(options) == 0 {
+	if len(varNames) == 0 {
 		return nil
 	}
 
-	specs := make([]ast.Spec, len(options))
+	specs := make([]ast.Spec, len(varNames))
 
-	valIdents := make([]*ast.Ident, len(options))
-	for i := range len(options) {
+	valIdents := make([]*ast.Ident, len(varNames))
+	for i := range len(varNames) {
 		valIdents[i] = &ast.Ident{
-			Name: strcase.ToCamel(options[i]),
+			Name: varNames[i],
 		}
 	}
 
@@ -346,7 +352,7 @@ func newSelectConstDecl(field *Field) *ast.GenDecl {
 		Values: []ast.Expr{&ast.Ident{Name: "iota"}},
 	}
 
-	for i := 1; i < len(options); i += 1 {
+	for i := 1; i < len(varNames); i += 1 {
 		specs[i] = &ast.ValueSpec{
 			Names: valIdents[i : i+1],
 		}
