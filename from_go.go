@@ -179,6 +179,12 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string) {
 		p.logError("Cannot have // select: comment on field of type other than int or []int", pos, -1, nil)
 	}
 
+	if len(field.Names) > 1 {
+		pos := p.Fset.Position(field.Pos())
+		errMsg := fmt.Sprintf("The // select: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
+		p.logError(errMsg, pos, -1, nil)
+	}
+
 	comment = strings.TrimSpace(comment[len(selectTypeComment):])
 	parsed, err := parser.ParseExpr(comment)
 	if err != nil {
@@ -204,12 +210,6 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string) {
 		return true
 	}
 	astutil.Apply(parsed, identFinder, nil)
-
-	if len(field.Names) > 1 {
-		pos := p.Fset.Position(field.Pos())
-		errMsg := fmt.Sprintf("The // select: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, -1, nil)
-	}
 
 	if typeName == "" || len(selectOptions) == 0 {
 		pos := p.Fset.Position(field.Pos())
