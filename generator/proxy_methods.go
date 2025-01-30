@@ -37,10 +37,7 @@ type methodProxifier struct {
 	newIdents map[string]any
 
 	// Set while the children of an AssignStmt are traversed
-	curAssign       *ast.AssignStmt
-	curAssignCursor *astutil.Cursor
-	// Current AssignStmt's child index
-	curIdx int
+	assignCursor *astutil.Cursor
 	// True when one of the AssignStmt children was replaced by a setter call
 	addedVars bool
 }
@@ -62,24 +59,28 @@ func newMethodProxifier(method *ast.FuncDecl, fields []*Field) *methodProxifier 
 		fieldNames:       fieldNames,
 		selectTypeFields: selectTypeFields,
 		newIdents:        make(map[string]any),
-		curIdx:           -1,
 	}
 }
 
 func (p *methodProxifier) proxify() {
-	p.traverse(p.method.Body)
+	astutil.Apply(p.method.Body, p.down, p.up)
 }
 
-func (p *methodProxifier) traverse(node ast.Node) {
-	astutil.Apply(node, p.down, p.up)
+// Using the traverseLeft or traverseRight function as the direction
+// argument, this function traverses the expressions to the
+// left or right of the assign statement.
+func (p *methodProxifier) traverseAssign(assign *ast.AssignStmt, direction astutil.ApplyFunc) {
+	astutil.Apply(assign, direction, p.up)
 }
 
-func (p *methodProxifier) traverseAssign(children []ast.Expr) {
-	for i, n := range children {
-		p.curIdx = i
-		p.traverse(n)
-	}
-	p.curIdx = -1
+func (p *methodProxifier) traverseLeft(c *astutil.Cursor) bool {
+	_, ok := c.Parent().(*ast.AssignStmt)
+	return !ok || c.Name() == "Lhs"
+}
+
+func (p *methodProxifier) traverseRight(c *astutil.Cursor) bool {
+	_, ok := c.Parent().(*ast.AssignStmt)
+	return !ok || c.Name() == "Rhs"
 }
 
 func (p *methodProxifier) down(c *astutil.Cursor) bool {
@@ -88,19 +89,17 @@ func (p *methodProxifier) down(c *astutil.Cursor) bool {
 		return true
 	}
 
-	p.curAssign = n
-	p.curAssignCursor = c
+	p.assignCursor = c
 
 	// Traverse right hand side first
-	p.traverseAssign(n.Rhs)
-	p.traverseAssign(n.Lhs)
+	p.traverseAssign(n, p.traverseRight)
+	p.traverseAssign(n, p.traverseLeft)
 
 	if p.addedVars {
 		n.Tok = token.DEFINE
 	}
 
-	p.curAssign = nil
-	p.curAssignCursor = nil
+	p.assignCursor = nil
 	p.addedVars = false
 
 	return false
@@ -116,9 +115,9 @@ func (p *methodProxifier) up(c *astutil.Cursor) bool {
 }
 
 func (p *methodProxifier) replaceFieldExpr(expr *ast.SelectorExpr, c *astutil.Cursor) {
-	if p.curAssign != nil && isAssignmentChild(expr, p.curAssign.Lhs) {
+	if _, ok := c.Parent().(*ast.AssignStmt); ok && c.Name() == "Lhs" {
 		// Left hand assignment children get replaced by setters
-		p.replaceWithSetter(expr)
+		p.replaceWithSetter(expr, c)
 	} else {
 		// Getter for everything else
 		p.replaceWithGetter(expr, c)
@@ -127,21 +126,18 @@ func (p *methodProxifier) replaceFieldExpr(expr *ast.SelectorExpr, c *astutil.Cu
 
 func (p *methodProxifier) replaceWithGetter(expr *ast.SelectorExpr, c *astutil.Cursor) {
 	getterCall := p.createGetterCall(expr)
-	if p.curAssign != nil && isAssignmentChild(expr, p.curAssign.Rhs) {
-		p.curAssign.Rhs[p.curIdx] = getterCall
-	} else {
-		c.Replace(getterCall)
-	}
+	c.Replace(getterCall)
+	return
 }
 
-func (p *methodProxifier) replaceWithSetter(expr *ast.SelectorExpr) {
+func (p *methodProxifier) replaceWithSetter(expr *ast.SelectorExpr, c *astutil.Cursor) {
 	tempVarName := p.findUnusedIdent(expr.Sel.Name)
 	tempIdent := ast.NewIdent(tempVarName)
 
 	setterCall := p.createSetterCall(expr, tempIdent)
+	c.Replace(tempIdent)
 
-	p.curAssign.Lhs[p.curIdx] = tempIdent
-	p.curAssignCursor.InsertAfter(&ast.ExprStmt{X: setterCall})
+	p.assignCursor.InsertAfter(&ast.ExprStmt{X: setterCall})
 	p.addedVars = true
 }
 
