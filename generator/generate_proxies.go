@@ -59,10 +59,14 @@ func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
 
 	decls := make([]ast.Decl, 0, 25)
 	for _, s := range structs {
+		structName := s.Name.Name
 		fields := p.extractStructFields(s)
 
 		decls = append(decls, createSelectTypes(fields)...)
-		decls = append(decls, newProxyDecl(s.Name.Name))
+		decls = append(decls, newProxyDecl(structName))
+
+		methods := p.structMethods[structName]
+		decls = append(decls, createProxyMethods(methods, fields)...)
 
 		getters := createFuncs(fields, newGetterDecl)
 		setters := createFuncs(fields, newSetterDecl)
@@ -83,8 +87,9 @@ type Parser struct {
 	Fset *token.FileSet
 	fAst *ast.File
 
-	structSpecs []*ast.TypeSpec
-	structNames map[string]*ast.TypeSpec
+	structSpecs   []*ast.TypeSpec
+	structNames   map[string]*ast.TypeSpec
+	structMethods map[string][]*ast.FuncDecl
 
 	// Tracks the declarations of select-typing related
 	// names to prevent duplication
@@ -106,6 +111,7 @@ func newParser(sourceCode []byte) *Parser {
 	}
 	parser.parseFile()
 	parser.collectStructSpecs()
+	parser.collectStructMethods()
 	return parser
 }
 
@@ -152,9 +158,33 @@ func (p *Parser) extractStructFields(structSpec *ast.TypeSpec) []*Field {
 	return fields
 }
 
-func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field {
-	fieldType := field.Type
+func (p *Parser) collectStructMethods() {
+	funcs := make(map[string][]*ast.FuncDecl)
 
+	for _, decl := range p.fAst.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		recv := funcDecl.Recv
+		if recv == nil {
+			continue
+		}
+
+		recvType := baseType(recv.List[0].Type)
+		recvName := nodeString(recvType)
+
+		_, ok = funcs[recvName]
+		if !ok {
+			funcs[recvName] = make([]*ast.FuncDecl, 0)
+		}
+		funcs[recvName] = append(funcs[recvName], funcDecl)
+	}
+
+	p.structMethods = funcs
+}
+
+func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field {
 	selectTypeName, selectOptions, selectVarNames := p.parseSelectTypeComment(field)
 	schemaName := p.parseAlternativeSchemaName(field)
 	if schemaName == "" {
@@ -168,7 +198,7 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 			structName,
 			fieldName,
 			schemaName,
-			fieldType,
+			field.Type,
 			selectTypeName,
 			selectOptions,
 			selectVarNames,
