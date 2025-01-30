@@ -103,9 +103,10 @@ func loadRecordGetters() {
 	primitiveGetters = recordGetters()
 }
 
-func newProxyDecl(name string) *ast.GenDecl {
+func newProxyDecl(name string, doc *ast.CommentGroup) *ast.GenDecl {
 	proxy := astcopy.GenDecl(structTemplate)
 	proxy.Specs[0].(*ast.TypeSpec).Name.Name = name
+	proxy.Doc = doc
 
 	return proxy
 }

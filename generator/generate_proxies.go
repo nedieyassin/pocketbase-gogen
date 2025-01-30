@@ -63,7 +63,7 @@ func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
 		fields := p.extractStructFields(s)
 
 		decls = append(decls, createSelectTypes(fields)...)
-		decls = append(decls, newProxyDecl(structName))
+		decls = append(decls, newProxyDecl(structName, s.Doc))
 
 		methods := p.structMethods[structName]
 		decls = append(decls, createProxyMethods(methods, fields)...)
@@ -503,7 +503,11 @@ func createSelectTypes(fields []*Field) []ast.Decl {
 // Returns a *ast.TypeSpec if it specifies a struct.
 // Otherwise nil
 func structSpec(n ast.Node) *ast.TypeSpec {
-	structSpec, ok := n.(*ast.TypeSpec)
+	structDecl, ok := n.(*ast.GenDecl)
+	if !ok {
+		return nil
+	}
+	structSpec, ok := structDecl.Specs[0].(*ast.TypeSpec)
 	if !ok {
 		return nil
 	}
@@ -511,6 +515,7 @@ func structSpec(n ast.Node) *ast.TypeSpec {
 	if !ok {
 		return nil
 	}
+	structSpec.Doc = structDecl.Doc
 	return structSpec
 }
 
