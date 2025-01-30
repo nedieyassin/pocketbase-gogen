@@ -36,7 +36,7 @@ type methodProxifier struct {
 
 	newIdents map[string]any
 
-	// Set while the children of an AssignStmt are traversed
+	// Points to the AssignStmt while its children are being traversed
 	assignCursor *astutil.Cursor
 	// True when one of the AssignStmt children was replaced by a setter call
 	addedVars bool
@@ -67,51 +67,33 @@ func (p *methodProxifier) proxify() {
 	astutil.Apply(p.method.Body, p.down, p.up)
 }
 
-// Using the traverseLeft or traverseRight function as the direction
-// argument, this function traverses the expressions to the
-// left or right of the assign statement.
-func (p *methodProxifier) traverseAssign(assign *ast.AssignStmt, direction astutil.ApplyFunc) {
-	astutil.Apply(assign, direction, p.up)
-}
-
-func (p *methodProxifier) traverseLeft(c *astutil.Cursor) bool {
-	_, ok := c.Parent().(*ast.AssignStmt)
-	return !ok || c.Name() == "Lhs"
-}
-
-func (p *methodProxifier) traverseRight(c *astutil.Cursor) bool {
-	_, ok := c.Parent().(*ast.AssignStmt)
-	return !ok || c.Name() == "Rhs"
-}
-
 func (p *methodProxifier) down(c *astutil.Cursor) bool {
-	n, ok := c.Node().(*ast.AssignStmt)
+	assign, ok := c.Node().(*ast.AssignStmt)
 	if !ok {
 		return true
 	}
 
 	p.assignCursor = c
 
-	// Traverse right hand side first
-	p.traverseAssign(n, p.traverseRight)
-	p.traverseAssign(n, p.traverseLeft)
-
-	if p.addedVars {
-		n.Tok = token.DEFINE
-	}
+	// Recursive apply so the p.assignCursor doesn't move
+	astutil.Apply(assign, nil, p.up)
 
 	p.assignCursor = nil
+	if p.addedVars {
+		assign.Tok = token.DEFINE
+	}
 	p.addedVars = false
 
+	// End this branch because the recursive one already covered the rest
+	// Also afaik nested assign statements are impossible in go (something like x = (y = 5))
 	return false
 }
 
 func (p *methodProxifier) up(c *astutil.Cursor) bool {
 	fieldExpr, ok := p.fieldExpr(c.Node())
-	if !ok {
-		return true
+	if ok {
+		p.replaceFieldExpr(fieldExpr, c)
 	}
-	p.replaceFieldExpr(fieldExpr, c)
 	return true
 }
 
