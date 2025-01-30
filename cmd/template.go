@@ -11,7 +11,7 @@ import (
 
 var templateCmd = &cobra.Command{
 	Use:   "template [input path] [output path]",
-	Short: "Generate the Editable Template Source",
+	Short: "Generate an Editable Schema as Code",
 	Long: `The template is an intermediate between the PB schema and the proxy code.
 
 Arguments:
@@ -21,7 +21,7 @@ Arguments:
   Use the --package flag to override the package name.
 
 
-What is this template for?
+What is this template/schema as code for?
 
 The template is a go source file that contains human readable struct definitions for every collection in the PB schema. The file is not for compilation. If you need it in your go project, place it in a separate package. The template is there so it can be edited before using the generate command. This gives control over the naming of the generated proxies.`,
 	Run: runTemplate,
