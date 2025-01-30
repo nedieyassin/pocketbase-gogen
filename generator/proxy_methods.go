@@ -63,6 +63,7 @@ func newMethodProxifier(method *ast.FuncDecl, fields []*Field) *methodProxifier 
 }
 
 func (p *methodProxifier) proxify() {
+	astutil.Apply(p.method.Body, replaceReassignment, nil)
 	astutil.Apply(p.method.Body, p.down, p.up)
 }
 
@@ -212,6 +213,44 @@ func (p *methodProxifier) fieldExpr(node ast.Node) (*ast.SelectorExpr, bool) {
 	}
 
 	return selector, true
+}
+
+// Replaces reassignment operators with the written out version
+// Example: x += 1  becomes  x = x + 1
+func replaceReassignment(c *astutil.Cursor) bool {
+	assign, ok := c.Node().(*ast.AssignStmt)
+	if !ok {
+		return true
+	}
+
+	operators := map[token.Token]token.Token{
+		token.ADD_ASSIGN:     token.ADD,     // +=
+		token.SUB_ASSIGN:     token.SUB,     // -=
+		token.MUL_ASSIGN:     token.MUL,     // *=
+		token.QUO_ASSIGN:     token.QUO,     // /=
+		token.REM_ASSIGN:     token.REM,     // %=
+		token.AND_ASSIGN:     token.AND,     // &=
+		token.OR_ASSIGN:      token.OR,      // |=
+		token.XOR_ASSIGN:     token.XOR,     // ^=
+		token.SHL_ASSIGN:     token.SHL,     // <<=
+		token.SHR_ASSIGN:     token.SHR,     // >>=
+		token.AND_NOT_ASSIGN: token.AND_NOT, // &^=
+	}
+
+	operator, ok := operators[assign.Tok]
+	if !ok {
+		return true
+	}
+
+	assign.Tok = token.ASSIGN
+	binary := &ast.BinaryExpr{
+		X:  assign.Lhs[0],
+		Op: operator,
+		Y:  assign.Rhs[0],
+	}
+	assign.Rhs[0] = binary
+
+	return true
 }
 
 func isAssignmentChild(expr *ast.SelectorExpr, assignments []ast.Expr) bool {
