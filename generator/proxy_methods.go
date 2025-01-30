@@ -14,29 +14,25 @@ func createProxyMethods(methods []*ast.FuncDecl, fields []*Field) []ast.Decl {
 		return nil
 	}
 
-	fieldNames := make(map[string]any, len(fields))
-	for _, f := range fields {
-		fieldNames[f.fieldName] = struct{}{}
-	}
-
 	proxyMethods := make([]ast.Decl, len(methods))
 	for i, m := range methods {
-		proxyMethods[i] = proxifyMethod(m, fieldNames)
+		proxyMethods[i] = proxifyMethod(m, fields)
 	}
 
 	return proxyMethods
 }
 
-func proxifyMethod(funcDecl *ast.FuncDecl, fieldNames map[string]any) *ast.FuncDecl {
-	proxifier := newMethodProxifier(funcDecl, fieldNames)
+func proxifyMethod(funcDecl *ast.FuncDecl, fields []*Field) *ast.FuncDecl {
+	proxifier := newMethodProxifier(funcDecl, fields)
 	proxifier.proxify()
 	return funcDecl
 }
 
 type methodProxifier struct {
-	method     *ast.FuncDecl
-	recvName   string
-	fieldNames map[string]any
+	method           *ast.FuncDecl
+	recvName         string
+	fieldNames       map[string]any
+	selectTypeFields map[string]string
 
 	newIdents map[string]any
 
@@ -49,14 +45,24 @@ type methodProxifier struct {
 	addedVars bool
 }
 
-func newMethodProxifier(method *ast.FuncDecl, fieldNames map[string]any) *methodProxifier {
+func newMethodProxifier(method *ast.FuncDecl, fields []*Field) *methodProxifier {
+	fieldNames := make(map[string]any, len(fields))
+	selectTypeFields := make(map[string]string)
+	for _, f := range fields {
+		fieldNames[f.fieldName] = struct{}{}
+		if f.selectTypeName != "" {
+			selectTypeFields[f.fieldName] = f.selectTypeName
+		}
+	}
+
 	recvName := method.Recv.List[0].Names[0].Name
 	return &methodProxifier{
-		method:     method,
-		recvName:   recvName,
-		fieldNames: fieldNames,
-		newIdents:  make(map[string]any),
-		curIdx:     -1,
+		method:           method,
+		recvName:         recvName,
+		fieldNames:       fieldNames,
+		selectTypeFields: selectTypeFields,
+		newIdents:        make(map[string]any),
+		curIdx:           -1,
 	}
 }
 
@@ -171,6 +177,16 @@ func (p *methodProxifier) createGetterCall(expr *ast.SelectorExpr) *ast.CallExpr
 func (p *methodProxifier) createSetterCall(expr *ast.SelectorExpr, assigned ast.Expr) *ast.CallExpr {
 	fieldName := expr.Sel.Name
 	setterName := fmt.Sprintf("Set%v", strcase.ToCamel(fieldName))
+
+	selectTypeName, ok := p.selectTypeFields[fieldName]
+	if ok {
+		// Add a cast to the select type
+		assigned = &ast.CallExpr{
+			Fun:  ast.NewIdent(selectTypeName),
+			Args: []ast.Expr{assigned},
+		}
+	}
+
 	call := &ast.CallExpr{
 		Fun: &ast.SelectorExpr{
 			X:   ast.NewIdent(p.recvName),
