@@ -55,18 +55,19 @@ func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
 // a warning.
 func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
 	p := newParser(sourceCode)
-	structs := p.structSpecs
+
+	proxyMethods := createProxyMethods(p)
 
 	decls := make([]ast.Decl, 0, 25)
-	for _, s := range structs {
+	for _, s := range p.structSpecs {
 		structName := s.Name.Name
-		fields := p.extractStructFields(s)
+		fields := p.structFields[structName]
 
 		decls = append(decls, createSelectTypes(fields)...)
 		decls = append(decls, newProxyDecl(structName, s.Doc))
 
-		methods := p.structMethods[structName]
-		decls = append(decls, createProxyMethods(methods, fields)...)
+		methods := proxyMethods[structName]
+		decls = append(decls, methods...)
 
 		getters := createFuncs(fields, newGetterDecl)
 		setters := createFuncs(fields, newSetterDecl)
@@ -89,6 +90,7 @@ type Parser struct {
 
 	structSpecs   []*ast.TypeSpec
 	structNames   map[string]*ast.TypeSpec
+	structFields  map[string][]*Field
 	structMethods map[string][]*ast.FuncDecl
 
 	// Tracks the declarations of select-typing related
@@ -111,6 +113,7 @@ func newParser(sourceCode []byte) *Parser {
 	}
 	parser.parseFile()
 	parser.collectStructSpecs()
+	parser.collectStructFields()
 	parser.collectStructMethods()
 	return parser
 }
@@ -146,16 +149,20 @@ func (p *Parser) collectStructSpecs() {
 	p.structNames = names
 }
 
-func (p *Parser) extractStructFields(structSpec *ast.TypeSpec) []*Field {
-	structName := structSpec.Name.Name
-	astFields := structSpec.Type.(*ast.StructType).Fields.List
-	fields := make([]*Field, 0, len(astFields))
+func (p *Parser) collectStructFields() {
+	p.structFields = make(map[string][]*Field)
 
-	for _, f := range astFields {
-		fields = append(fields, p.newFieldsFromAST(structName, f)...)
+	for _, s := range p.structSpecs {
+		structName := s.Name.Name
+		astFields := s.Type.(*ast.StructType).Fields.List
+		fields := make([]*Field, 0, len(astFields))
+
+		for _, f := range astFields {
+			fields = append(fields, p.newFieldsFromAST(structName, f)...)
+		}
+
+		p.structFields[structName] = fields
 	}
-
-	return fields
 }
 
 func (p *Parser) collectStructMethods() {

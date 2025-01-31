@@ -3,36 +3,50 @@ package generator
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/token"
+	"go/types"
+	"log"
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-func createProxyMethods(methods []*ast.FuncDecl, fields []*Field) []ast.Decl {
-	if len(methods) == 0 {
-		return nil
+func createProxyMethods(parser *Parser) map[string][]ast.Decl {
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	_, err := conf.Check("template", parser.Fset, []*ast.File{parser.fAst}, info)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	proxyMethods := make([]ast.Decl, len(methods))
-	for i, m := range methods {
-		proxyMethods[i] = proxifyMethod(m, fields)
+	decls := make(map[string][]ast.Decl)
+	for _, s := range parser.structSpecs {
+		structName := s.Name.Name
+		methods := parser.structMethods[structName]
+		fields := parser.structFields[structName]
+
+		proxyMethods := make([]ast.Decl, len(methods))
+		for i, m := range methods {
+			newMethodProxifier(m, fields, info, parser.structNames).proxify()
+			proxyMethods[i] = m
+		}
+
+		decls[structName] = proxyMethods
 	}
 
-	return proxyMethods
-}
-
-func proxifyMethod(funcDecl *ast.FuncDecl, fields []*Field) *ast.FuncDecl {
-	proxifier := newMethodProxifier(funcDecl, fields)
-	proxifier.proxify()
-	return funcDecl
+	return decls
 }
 
 type methodProxifier struct {
 	method           *ast.FuncDecl
-	recvName         string
-	fieldNames       map[string]any
 	selectTypeFields map[string]string
+	allProxyNames    map[string]*ast.TypeSpec
+
+	typeInfo *types.Info
 
 	newIdents map[string]any
 
@@ -42,22 +56,24 @@ type methodProxifier struct {
 	addedVars bool
 }
 
-func newMethodProxifier(method *ast.FuncDecl, fields []*Field) *methodProxifier {
-	fieldNames := make(map[string]any, len(fields))
+func newMethodProxifier(
+	method *ast.FuncDecl,
+	fields []*Field,
+	typeInfo *types.Info,
+	allProxyNames map[string]*ast.TypeSpec,
+) *methodProxifier {
 	selectTypeFields := make(map[string]string)
 	for _, f := range fields {
-		fieldNames[f.fieldName] = struct{}{}
 		if f.selectTypeName != "" {
 			selectTypeFields[f.fieldName] = f.selectTypeName
 		}
 	}
 
-	recvName := method.Recv.List[0].Names[0].Name
 	return &methodProxifier{
 		method:           method,
-		recvName:         recvName,
-		fieldNames:       fieldNames,
 		selectTypeFields: selectTypeFields,
+		allProxyNames:    allProxyNames,
+		typeInfo:         typeInfo,
 		newIdents:        make(map[string]any),
 	}
 }
@@ -90,55 +106,89 @@ func (p *methodProxifier) down(c *astutil.Cursor) bool {
 }
 
 func (p *methodProxifier) up(c *astutil.Cursor) bool {
-	fieldExpr, ok := p.fieldExpr(c.Node())
-	if ok {
-		p.replaceFieldExpr(fieldExpr, c)
+	selector, ok := c.Node().(*ast.SelectorExpr)
+	if !ok {
+		return true
 	}
+	p.proxifySelector(selector, c)
 	return true
 }
 
-func (p *methodProxifier) replaceFieldExpr(expr *ast.SelectorExpr, c *astutil.Cursor) {
-	if _, ok := c.Parent().(*ast.AssignStmt); ok && c.Name() == "Lhs" {
-		// Left hand assignment children get replaced by setters
-		p.replaceWithSetter(expr, c)
-	} else {
-		// Getter for everything else
-		p.replaceWithGetter(expr, c)
+func (p *methodProxifier) proxifySelector(
+	selector *ast.SelectorExpr,
+	c *astutil.Cursor,
+) {
+	expr := p.replaceNestedSelector(selector)
+
+	_, ok := c.Parent().(*ast.AssignStmt)
+	isLhsAssign := ok && c.Name() == "Lhs"
+
+	if isLhsAssign {
+		lhsReplacement, setterCall := p.setterOr(selector, expr)
+		c.Replace(lhsReplacement)
+		if setterCall != nil {
+			p.assignCursor.InsertAfter(setterCall)
+		}
+		return
 	}
-}
-
-func (p *methodProxifier) replaceWithGetter(expr *ast.SelectorExpr, c *astutil.Cursor) {
-	getterCall := p.createGetterCall(expr)
-	c.Replace(getterCall)
-	return
-}
-
-func (p *methodProxifier) replaceWithSetter(expr *ast.SelectorExpr, c *astutil.Cursor) {
-	tempVarName := p.findUnusedIdent(expr.Sel.Name)
-	tempIdent := ast.NewIdent(tempVarName)
-
-	setterCall := p.createSetterCall(expr, tempIdent)
-	c.Replace(tempIdent)
-
-	p.assignCursor.InsertAfter(&ast.ExprStmt{X: setterCall})
-	p.addedVars = true
-}
-
-func (p *methodProxifier) findUnusedIdent(ident string) string {
-	ident = strcase.ToLowerCamel(ident)
-	_, used := p.newIdents[ident]
-	if used {
-		orig := ident
-		for i := 2; ; i += 1 {
-			ident = fmt.Sprintf("%v%v", orig, i)
-			_, used := p.newIdents[ident]
-			if !used {
-				break
-			}
+	_, ok = c.Parent().(*ast.SelectorExpr)
+	if !ok {
+		getterCall := p.getterOr(selector, expr)
+		if getterCall != nil {
+			c.Replace(getterCall)
 		}
 	}
-	p.newIdents[ident] = struct{}{}
-	return ident
+}
+
+// Checks if a SelectorExpr has a nested SelectorExpr and replaces
+// it with a getter call if necessary.
+// In any case the original selector expression is returned.
+// It is needed for being type checked while the replacement
+// getter call is not.
+func (p *methodProxifier) replaceNestedSelector(selector *ast.SelectorExpr) ast.Expr {
+	nestedSelector, ok := selector.X.(*ast.SelectorExpr)
+	if !ok {
+		return selector.X
+	}
+
+	getterCall := p.getterOr(nestedSelector, nestedSelector.X)
+	if getterCall != nil {
+		selector.X = getterCall
+	}
+	return nestedSelector
+}
+
+// Checks if the selector and selectee accesses a proxy field and
+// if so converts the selector into a getter call and returns it.
+// Otherwise returns the unchanged selector.
+func (p *methodProxifier) getterOr(selector *ast.SelectorExpr, selectee ast.Expr) ast.Expr {
+	if !p.selectsProxyField(selector, selectee) {
+		return selector
+	}
+
+	call := p.createGetterCall(selector)
+	return call
+}
+
+// Checks if the selector and selectee access a proxy field and
+// if so converts the selector into a temporary variable
+// and as the second return value gives a setter call with the
+// temporary variable as its argument.
+// If the check fails, the original selector and nil are returned.
+func (p *methodProxifier) setterOr(selector *ast.SelectorExpr, selectee ast.Expr) (ast.Expr, ast.Stmt) {
+	if !p.selectsProxyField(selector, selectee) {
+		return selector, nil
+	}
+
+	tempVarName := p.findUnusedIdent(selector.Sel.Name)
+	tempIdent := ast.NewIdent(tempVarName)
+
+	setterCall := p.createSetterCall(selector, tempIdent)
+	setterStmt := &ast.ExprStmt{X: setterCall}
+
+	p.addedVars = true
+
+	return tempIdent, setterStmt
 }
 
 func (p *methodProxifier) createGetterCall(expr *ast.SelectorExpr) *ast.CallExpr {
@@ -146,7 +196,7 @@ func (p *methodProxifier) createGetterCall(expr *ast.SelectorExpr) *ast.CallExpr
 	getterName := strcase.ToCamel(fieldName)
 	call := &ast.CallExpr{
 		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent(p.recvName),
+			X:   expr.X,
 			Sel: ast.NewIdent(getterName),
 		},
 	}
@@ -168,7 +218,7 @@ func (p *methodProxifier) createSetterCall(expr *ast.SelectorExpr, assigned ast.
 
 	call := &ast.CallExpr{
 		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent(p.recvName),
+			X:   expr.X,
 			Sel: ast.NewIdent(setterName),
 		},
 		Args: []ast.Expr{assigned},
@@ -176,25 +226,39 @@ func (p *methodProxifier) createSetterCall(expr *ast.SelectorExpr, assigned ast.
 	return call
 }
 
-// Returns a SelectorExpr, true if the given expression
-// resolves to one of the proxy fields.
-// Otherwise nil, false
-func (p *methodProxifier) fieldExpr(node ast.Node) (*ast.SelectorExpr, bool) {
-	selector, ok := node.(*ast.SelectorExpr)
-	if !ok {
-		return nil, false
-	}
-	exprIdent, ok := selector.X.(*ast.Ident)
-	if !ok || exprIdent.Name != p.recvName {
-		return nil, false
-	}
-	selectedName := selector.Sel.Name
-	_, isFieldName := p.fieldNames[selectedName]
-	if !isFieldName {
-		return nil, false
+// Returns true when the selector is selecting at a struct field
+// and the selectee's type is that of a proxy struct.
+func (p *methodProxifier) selectsProxyField(selector *ast.SelectorExpr, selectee ast.Expr) bool {
+	selection, ok := p.typeInfo.Selections[selector]
+	if !ok || selection.Kind() != types.FieldVal {
+		return false
 	}
 
-	return selector, true
+	exprType := p.typeInfo.Types[selectee]
+	typeName := unwrapTypeName(exprType.Type)
+	_, isProxy := p.allProxyNames[typeName]
+	if !isProxy {
+		return false
+	}
+
+	return true
+}
+
+func (p *methodProxifier) findUnusedIdent(ident string) string {
+	ident = strcase.ToLowerCamel(ident)
+	_, used := p.newIdents[ident]
+	if used {
+		orig := ident
+		for i := 2; ; i += 1 {
+			ident = fmt.Sprintf("%v%v", orig, i)
+			_, used := p.newIdents[ident]
+			if !used {
+				break
+			}
+		}
+	}
+	p.newIdents[ident] = struct{}{}
+	return ident
 }
 
 // Replaces reassignment operators with the written out version
@@ -235,12 +299,22 @@ func replaceReassignment(c *astutil.Cursor) bool {
 	return true
 }
 
-func isAssignmentChild(expr *ast.SelectorExpr, assignments []ast.Expr) bool {
-	for _, e := range assignments {
-		selectorExpr, ok := e.(*ast.SelectorExpr)
-		if ok && selectorExpr == expr {
-			return true
+func unwrapTypeName(typ types.Type) string {
+Loop:
+	for {
+		switch t := typ.(type) {
+		case *types.Slice:
+			typ = t.Elem()
+		case *types.Pointer:
+			typ = t.Elem()
+		default:
+			break Loop
 		}
 	}
-	return false
+
+	namedType, ok := typ.(*types.Named)
+	if ok {
+		return namedType.Obj().Name()
+	}
+	return ""
 }
