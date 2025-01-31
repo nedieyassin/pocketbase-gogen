@@ -48,7 +48,7 @@ func (p *StructName) FuncName() FieldType {
 	option := p.GetString("key")
 	i, ok := selectNameMap[option]
 	if !ok {
-		return -1
+		panic("Unknown select value")
 	}
 	return i
 }
@@ -60,7 +60,7 @@ func (p *StructName) FuncName() []FieldType {
 	for _, o := range options {
 		i, ok := selectNameMap[o]
 		if !ok {
-			i = -1
+			panic("Unknown select value")
 		} 
 		is = append(is, i)
 	}
