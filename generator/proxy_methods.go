@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"slices"
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/go/ast/astutil"
@@ -31,7 +32,7 @@ func createProxyMethods(parser *Parser) map[string][]ast.Decl {
 
 		proxyMethods := make([]ast.Decl, len(methods))
 		for i, m := range methods {
-			newMethodProxifier(m, fields, info, parser.structNames).proxify()
+			newMethodProxifier(m, fields, info, parser).proxify()
 			proxyMethods[i] = m
 		}
 
@@ -45,22 +46,25 @@ type methodProxifier struct {
 	method           *ast.FuncDecl
 	selectTypeFields map[string]string
 	allProxyNames    map[string]*ast.TypeSpec
+	parser           *Parser
 
-	typeInfo *types.Info
+	typeInfo   *types.Info
+	blockStmts map[token.Pos]*ast.BlockStmt
 
 	newIdents map[string]any
 
 	// Points to the AssignStmt while its children are being traversed
 	assignCursor *astutil.Cursor
 	// True when one of the AssignStmt children was replaced by a setter call
-	addedVars bool
+	addedVars  bool
+	assignMove *assignMove
 }
 
 func newMethodProxifier(
 	method *ast.FuncDecl,
 	fields []*Field,
 	typeInfo *types.Info,
-	allProxyNames map[string]*ast.TypeSpec,
+	parser *Parser,
 ) *methodProxifier {
 	selectTypeFields := make(map[string]string)
 	for _, f := range fields {
@@ -69,18 +73,34 @@ func newMethodProxifier(
 		}
 	}
 
-	return &methodProxifier{
+	p := &methodProxifier{
 		method:           method,
 		selectTypeFields: selectTypeFields,
-		allProxyNames:    allProxyNames,
+		allProxyNames:    parser.structNames,
+		parser:           parser,
 		typeInfo:         typeInfo,
 		newIdents:        make(map[string]any),
 	}
+	return p
 }
 
 func (p *methodProxifier) proxify() {
 	astutil.Apply(p.method.Body, replaceReassignment, nil)
 	astutil.Apply(p.method.Body, p.down, p.up)
+}
+
+func (p *methodProxifier) traverseAssign(assign *ast.AssignStmt, direction astutil.ApplyFunc) {
+	astutil.Apply(assign, direction, p.up)
+}
+
+func (p *methodProxifier) traverseLeft(c *astutil.Cursor) bool {
+	_, ok := c.Parent().(*ast.AssignStmt)
+	return !ok || c.Name() == "Lhs"
+}
+
+func (p *methodProxifier) traverseRight(c *astutil.Cursor) bool {
+	_, ok := c.Parent().(*ast.AssignStmt)
+	return !ok || c.Name() == "Rhs"
 }
 
 func (p *methodProxifier) down(c *astutil.Cursor) bool {
@@ -90,10 +110,15 @@ func (p *methodProxifier) down(c *astutil.Cursor) bool {
 	}
 
 	p.assignCursor = c
+	p.assignMove = nil
 
 	// Recursive apply so the p.assignCursor doesn't move
-	astutil.Apply(assign, nil, p.up)
+	// Also traverse left first so the getters are already
+	// changed when the setters are taking their arg
+	p.traverseAssign(assign, p.traverseRight)
+	p.traverseAssign(assign, p.traverseLeft)
 
+	p.applyAssignMove()
 	p.assignCursor = nil
 	if p.addedVars {
 		assign.Tok = token.DEFINE
@@ -106,63 +131,175 @@ func (p *methodProxifier) down(c *astutil.Cursor) bool {
 }
 
 func (p *methodProxifier) up(c *astutil.Cursor) bool {
-	selector, ok := c.Node().(*ast.SelectorExpr)
-	if !ok {
-		return true
+	switch n := c.Node().(type) {
+	case *ast.SelectorExpr:
+		p.proxifySelector(n, c)
+	case *ast.RangeStmt:
+		p.proxifyRangeStmt(n)
 	}
-	p.proxifySelector(selector, c)
 	return true
+}
+
+type assignMove struct {
+	assign      *ast.AssignStmt
+	targetBock  *ast.BlockStmt
+	targetIndex int
+	toMove      []ast.Expr
+}
+
+func (p *methodProxifier) initAssignMove(targetBlock *ast.BlockStmt, targetIndex int) {
+	if p.assignMove != nil {
+		return
+	}
+	p.assignMove = &assignMove{
+		assign:      p.assignCursor.Node().(*ast.AssignStmt),
+		targetBock:  targetBlock,
+		targetIndex: targetIndex,
+		toMove:      make([]ast.Expr, 0),
+	}
+}
+
+func (p *methodProxifier) applyAssignMove() {
+	if p.assignMove == nil {
+		return
+	}
+	if len(p.assignMove.toMove) == 0 {
+		return
+	}
+	assign := p.assignMove.assign
+
+	moved := &ast.AssignStmt{
+		Lhs: make([]ast.Expr, 0),
+		Tok: token.DEFINE,
+		Rhs: make([]ast.Expr, 0),
+	}
+
+	for _, s := range p.assignMove.toMove {
+		i := slices.Index(assign.Lhs, s)
+		if i == -1 {
+			panic("Lift failed")
+		}
+		moved.Lhs = append(moved.Lhs, s)
+		moved.Rhs = append(moved.Rhs, assign.Rhs[i])
+	}
+
+	if len(moved.Lhs) == len(assign.Lhs) {
+		p.assignCursor.Replace(&ast.EmptyStmt{Implicit: false})
+	} else {
+		assign.Lhs = slices.DeleteFunc(
+			assign.Lhs,
+			func(e ast.Expr) bool { return slices.Contains(moved.Lhs, e) },
+		)
+		assign.Rhs = slices.DeleteFunc(
+			assign.Rhs,
+			func(e ast.Expr) bool { return slices.Contains(moved.Rhs, e) },
+		)
+	}
+
+	block := p.assignMove.targetBock
+	index := p.assignMove.targetIndex
+	block.List = slices.Insert(block.List, index, ast.Stmt(moved))
 }
 
 func (p *methodProxifier) proxifySelector(
 	selector *ast.SelectorExpr,
 	c *astutil.Cursor,
 ) {
-	expr := p.replaceNestedSelector(selector)
+	p.replaceNestedSelector(selector)
 
-	_, ok := c.Parent().(*ast.AssignStmt)
+	assign, ok := c.Parent().(*ast.AssignStmt)
 	isLhsAssign := ok && c.Name() == "Lhs"
 
 	if isLhsAssign {
-		lhsReplacement, setterCall := p.setterOr(selector, expr)
-		c.Replace(lhsReplacement)
-		if setterCall != nil {
-			p.assignCursor.InsertAfter(setterCall)
+		replacement, setterCall := p.setterOr(selector)
+		if setterCall == nil {
+			p.assignCursor.Replace(replacement)
+			return
+		}
+		c.Replace(replacement)
+
+		block, insertIndex, lift := p.findSetterBlock(p.assignCursor.Parent(), assign)
+		if block == nil || insertIndex < 0 {
+			pos := p.parser.Fset.Position(assign.TokPos)
+			log.Fatalf("%v: An error ocurred while trying to convert the assign statement to a proxy setter call. Try using a different syntax.", pos)
+		}
+
+		block.List = slices.Insert(block.List, insertIndex, setterCall)
+		if lift {
+			p.initAssignMove(block, insertIndex)
+			p.assignMove.toMove = append(p.assignMove.toMove, replacement.(ast.Expr))
 		}
 		return
 	}
+
 	_, ok = c.Parent().(*ast.SelectorExpr)
-	if !ok {
-		getterCall := p.getterOr(selector, expr)
+	_, ok2 := c.Parent().(*ast.RangeStmt)
+	if !ok && !ok2 {
+		getterCall := p.getterOr(selector)
 		if getterCall != nil {
 			c.Replace(getterCall)
 		}
 	}
 }
 
-// Checks if a SelectorExpr has a nested SelectorExpr and replaces
-// it with a getter call if necessary.
-// In any case the original selector expression is returned.
-// It is needed for being type checked while the replacement
-// getter call is not.
-func (p *methodProxifier) replaceNestedSelector(selector *ast.SelectorExpr) ast.Expr {
-	nestedSelector, ok := selector.X.(*ast.SelectorExpr)
-	if !ok {
-		return selector.X
+func (p *methodProxifier) proxifyRangeStmt(stmt *ast.RangeStmt) {
+	value, ok := stmt.Value.(*ast.SelectorExpr)
+	ok = ok && p.selectsProxyField(value)
+	if ok {
+		tempVarName := p.findUnusedIdent(value.Sel.Name)
+		tempVarIdent := ast.NewIdent(tempVarName)
+		setterCall := p.createSetterCall(value, tempVarIdent)
+		stmt.Value = tempVarIdent
+
+		var setterStmt ast.Stmt = &ast.ExprStmt{X: setterCall}
+		stmt.Body.List = slices.Insert(stmt.Body.List, 0, setterStmt)
 	}
 
-	getterCall := p.getterOr(nestedSelector, nestedSelector.X)
-	if getterCall != nil {
-		selector.X = getterCall
+	key, ok2 := stmt.Key.(*ast.SelectorExpr)
+	ok2 = ok2 && p.selectsProxyField(key)
+	if ok2 {
+		tempVarName := p.findUnusedIdent(key.Sel.Name)
+		tempVarIdent := ast.NewIdent(tempVarName)
+		setterCall := p.createSetterCall(key, tempVarIdent)
+		stmt.Key = tempVarIdent
+
+		var setterStmt ast.Stmt = &ast.ExprStmt{X: setterCall}
+		stmt.Body.List = slices.Insert(stmt.Body.List, 0, setterStmt)
 	}
-	return nestedSelector
+
+	if ok || ok2 {
+		stmt.Tok = token.DEFINE
+	}
+
+	selector, ok := stmt.X.(*ast.SelectorExpr)
+	if ok {
+		getterCall := p.getterOr(selector)
+		if getterCall != nil {
+			stmt.X = getterCall
+		}
+	}
 }
 
-// Checks if the selector and selectee accesses a proxy field and
+// Checks if a SelectorExpr has a nested SelectorExpr and replaces
+// it with a getter call if necessary.
+func (p *methodProxifier) replaceNestedSelector(selector *ast.SelectorExpr) {
+	nestedSelector, ok := selector.X.(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+
+	getterCall := p.getterOr(nestedSelector)
+	if getterCall != nil {
+		p.typeInfo.Types[getterCall] = p.typeInfo.Types[nestedSelector]
+		selector.X = getterCall
+	}
+}
+
+// Checks if the selector accesses a proxy field and
 // if so converts the selector into a getter call and returns it.
 // Otherwise returns the unchanged selector.
-func (p *methodProxifier) getterOr(selector *ast.SelectorExpr, selectee ast.Expr) ast.Expr {
-	if !p.selectsProxyField(selector, selectee) {
+func (p *methodProxifier) getterOr(selector *ast.SelectorExpr) ast.Expr {
+	if !p.selectsProxyField(selector) {
 		return selector
 	}
 
@@ -170,25 +307,36 @@ func (p *methodProxifier) getterOr(selector *ast.SelectorExpr, selectee ast.Expr
 	return call
 }
 
-// Checks if the selector and selectee access a proxy field and
+// Checks if the selector accesses a proxy field and
 // if so converts the selector into a temporary variable
 // and as the second return value gives a setter call with the
 // temporary variable as its argument.
 // If the check fails, the original selector and nil are returned.
-func (p *methodProxifier) setterOr(selector *ast.SelectorExpr, selectee ast.Expr) (ast.Expr, ast.Stmt) {
-	if !p.selectsProxyField(selector, selectee) {
+func (p *methodProxifier) setterOr(selector *ast.SelectorExpr) (ast.Node, ast.Stmt) {
+	if !p.selectsProxyField(selector) {
 		return selector, nil
 	}
+	var replacement ast.Node
+	var setterStmt ast.Stmt
+	assign, ok := p.assignCursor.Node().(*ast.AssignStmt)
+	multiAssign := ok && len(assign.Lhs) > 1
 
-	tempVarName := p.findUnusedIdent(selector.Sel.Name)
-	tempIdent := ast.NewIdent(tempVarName)
+	if multiAssign {
+		tempVarName := p.findUnusedIdent(selector.Sel.Name)
+		tempVarIdent := ast.NewIdent(tempVarName)
 
-	setterCall := p.createSetterCall(selector, tempIdent)
-	setterStmt := &ast.ExprStmt{X: setterCall}
+		setterCall := p.createSetterCall(selector, tempVarIdent)
 
-	p.addedVars = true
+		replacement = tempVarIdent
+		setterStmt = &ast.ExprStmt{X: setterCall}
+		p.addedVars = true
+	} else {
+		setterArg := assign.Rhs[0]
+		setterCall := p.createSetterCall(selector, setterArg)
+		replacement = &ast.ExprStmt{X: setterCall}
+	}
 
-	return tempIdent, setterStmt
+	return replacement, setterStmt
 }
 
 func (p *methodProxifier) createGetterCall(expr *ast.SelectorExpr) *ast.CallExpr {
@@ -226,15 +374,15 @@ func (p *methodProxifier) createSetterCall(expr *ast.SelectorExpr, assigned ast.
 	return call
 }
 
-// Returns true when the selector is selecting at a struct field
-// and the selectee's type is that of a proxy struct.
-func (p *methodProxifier) selectsProxyField(selector *ast.SelectorExpr, selectee ast.Expr) bool {
+// Returns true when the selector is selecting a struct field
+// and the struct is a proxy.
+func (p *methodProxifier) selectsProxyField(selector *ast.SelectorExpr) bool {
 	selection, ok := p.typeInfo.Selections[selector]
 	if !ok || selection.Kind() != types.FieldVal {
 		return false
 	}
 
-	exprType := p.typeInfo.Types[selectee]
+	exprType := p.typeInfo.Types[selector.X]
 	typeName := unwrapTypeName(exprType.Type)
 	_, isProxy := p.allProxyNames[typeName]
 	if !isProxy {
@@ -259,6 +407,70 @@ func (p *methodProxifier) findUnusedIdent(ident string) string {
 	}
 	p.newIdents[ident] = struct{}{}
 	return ident
+}
+
+// Finds the block that a setter needs to be inserted to as the
+// replacement for a proxy field assignment.
+// Returns the block, the insertion index and a boolean for whether
+// the assign has to move out of its parent because setter syntax does
+// not work inside init and post statements of if/for statements.
+func (p *methodProxifier) findSetterBlock(assignParent ast.Node, assign ast.Stmt) (*ast.BlockStmt, int, bool) {
+	switch n := assignParent.(type) {
+	case *ast.BlockStmt:
+		return n, slices.Index(n.List, assign), false
+
+	case *ast.ForStmt:
+		if assign == n.Init {
+			parentContaining, i := p.parentSetterBlock(n)
+			return parentContaining, i, true
+		} else if assign == n.Post {
+			return n.Body, len(n.Body.List), true
+		}
+
+	case *ast.IfStmt:
+		if assign == n.Init {
+			parentContaining, i := p.parentSetterBlock(n)
+			return parentContaining, i, true
+		}
+
+	case *ast.SwitchStmt:
+		if assign == n.Init {
+			parentContaining, i := p.parentSetterBlock(n)
+			return parentContaining, i, true
+		}
+
+	case *ast.TypeSwitchStmt:
+		if assign == n.Init {
+			parentContaining, i := p.parentSetterBlock(n)
+			return parentContaining, i, true
+		}
+
+	}
+	return nil, -1, false
+}
+
+func (p *methodProxifier) parentSetterBlock(parent ast.Stmt) (*ast.BlockStmt, int) {
+	containingBlock := p.findContainingBlock(parent)
+	index := slices.Index(containingBlock.List, parent)
+	return containingBlock, index
+}
+
+func (p *methodProxifier) findContainingBlock(node ast.Node) *ast.BlockStmt {
+	var containingBlock *ast.BlockStmt
+
+	finder := func(n ast.Node) bool {
+		if node == n {
+			return false
+		}
+		block, ok := n.(*ast.BlockStmt)
+		if ok {
+			containingBlock = block
+		}
+		return true
+	}
+	ast.Inspect(p.method.Body, finder)
+
+	return containingBlock
 }
 
 // Replaces reassignment operators with the written out version
