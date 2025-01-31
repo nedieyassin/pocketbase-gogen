@@ -49,7 +49,6 @@ type methodProxifier struct {
 	parser           *Parser
 
 	typeInfo   *types.Info
-	blockStmts map[token.Pos]*ast.BlockStmt
 
 	newIdents map[string]any
 
