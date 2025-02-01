@@ -175,20 +175,16 @@ type Parser struct {
 	// Tracks the declarations of select-typing related
 	// names to prevent duplication
 	selectTypeDups       map[string]any
-	selectVarDups        map[string]any
 	selectTypeToOptions  map[string][]string
 	selectTypeToVarNames map[string][]string
-	varToSelectType      map[string]string
 }
 
 func newParser(sourceCode []byte) (*Parser, error) {
 	parser := &Parser{
 		sourceCode:           sourceCode,
 		selectTypeDups:       map[string]any{},
-		selectVarDups:        map[string]any{},
 		selectTypeToOptions:  map[string][]string{},
 		selectTypeToVarNames: map[string][]string{},
-		varToSelectType:      map[string]string{},
 	}
 	if err := parser.parseFile(); err != nil {
 		return nil, err
@@ -495,32 +491,28 @@ func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selec
 	p.selectTypeToOptions[typeName] = selectOptions
 	p.selectTypeToVarNames[typeName] = selectVarNames
 
-	selectVarNames = p.checkSelectVarNameDuplicates(commentPos, typeName, selectVarNames)
+	selectVarNames = p.checkSelectVarNameDuplicates(commentPos, selectVarNames)
 
 	return typeName, selectOptions, selectVarNames
 }
 
-func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, typeName string, selectVarNames []string) []string {
+func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, selectVarNames []string) []string {
 	checkedNames := make([]string, len(selectVarNames))
 
 	for i, name := range selectVarNames {
-		origName := name
-		_, isDuplicate := p.selectVarDups[name]
+		_, isDuplicate := p.selectTypeDups[name]
 
 		if isDuplicate {
-			name = rename(name, p.selectVarDups)
+			name = rename(name, p.selectTypeDups)
 
-			origOwner := p.varToSelectType[origName]
 			pos := p.Fset.Position(commentPos)
 			warnMsg := fmt.Sprintf(
-				"Found a duplicate select variable name. %v is already in %v. Renaming to %v.",
-				origName, origOwner, name,
+				"Found a duplicate select variable name. Renaming to %v.", name,
 			)
 			p.logWarning(warnMsg, pos, nil)
 		}
 
-		p.selectVarDups[name] = struct{}{}
-		p.varToSelectType[name] = typeName
+		p.selectTypeDups[name] = struct{}{}
 
 		checkedNames[i] = name
 	}
