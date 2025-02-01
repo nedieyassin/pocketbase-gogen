@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -21,7 +22,6 @@ It takes in a PocketBase schema and generates a proxy struct for each collection
 		DisableDefaultCmd: true,
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(cmd.Use)
 	},
 }
 
@@ -39,8 +39,7 @@ func Execute() {
 
 func errCheck(err error) {
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }
 
@@ -60,8 +59,7 @@ func checkSchemaImportPath(path string) bool {
 	isDir := inFileInfo.IsDir()
 
 	if !isDir && filepath.Ext(path) != ".json" {
-		fmt.Println("The input path leads to a file but it is not a *.json file.")
-		os.Exit(1)
+		log.Fatal("The input path leads to a file but it is not a *.json file.")
 	}
 
 	if isDir {
@@ -80,8 +78,7 @@ func checkSchemaImportPath(path string) bool {
 		}
 
 		if !dbPresent {
-			fmt.Println("The input directory path does not contain the data.db file of PocketBase")
-			os.Exit(1)
+			log.Fatal("The input directory path does not contain the data.db file of PocketBase")
 		}
 	}
 

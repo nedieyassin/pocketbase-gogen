@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -33,8 +33,7 @@ func init() {
 
 func runTemplate(cmd *cobra.Command, args []string) {
 	if len(args) != 2 {
-		fmt.Println("Two path arguments required. Use --help for more information.")
-		os.Exit(1)
+		log.Fatal("Two path arguments required. Use --help for more information.")
 	}
 
 	collections := importSchema(args[0])
@@ -55,5 +54,5 @@ func runTemplate(cmd *cobra.Command, args []string) {
 	_, err = out.Write(sourceCode)
 	errCheck(err)
 
-	fmt.Printf("Saved the template to %v", args[1])
+	log.Println("Saved the template to %v", args[1])
 }

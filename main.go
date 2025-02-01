@@ -1,7 +1,13 @@
 package main
 
-import "github.com/snonky/pocketbase-gogen/cmd"
+import (
+	"log"
+
+	"github.com/snonky/pocketbase-gogen/cmd"
+)
 
 func main() {
+	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
+
 	cmd.Execute()
 }

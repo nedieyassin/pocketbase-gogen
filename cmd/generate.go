@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -38,8 +38,7 @@ func init() {
 
 func runGenerate(cmd *cobra.Command, args []string) {
 	if len(args) != 2 {
-		fmt.Println("Two path arguments required. Use --help for more information.")
-		os.Exit(1)
+		log.Fatal("Two path arguments required. Use --help for more information.")
 	}
 
 	var collections []*core.Collection
@@ -70,17 +69,16 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	_, err = out.Write(sourceCode)
 	errCheck(err)
 
-	fmt.Printf("Saved the generated code to %v", args[1])
+	log.Println("Saved the generated code to %v", args[1])
 	return
 }
 
 func readTemplate(filename string) []byte {
 	if filepath.Ext(filename) != ".go" {
-		fmt.Println(
+		log.Fatal(
 			`The input file is not a *.go file.
 Use the --direct flag if you want to generate directly from PB schema or use the template command to get a PocketBase go template first.`,
 		)
-		os.Exit(1)
 	}
 	source, err := os.ReadFile(filename)
 	errCheck(err)
