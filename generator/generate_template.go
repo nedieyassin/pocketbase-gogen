@@ -137,7 +137,7 @@ func (t *SchemaTranslator) goType(field core.Field) ast.Expr {
 		relatedCollection := t.collectionIds[f.CollectionId]
 		typeName = "*" + strcase.ToCamel(relatedCollection.Name)
 	case *core.JSONField:
-		typeName = "types.JSONRaw"
+		typeName = "string"
 	case *core.PasswordField:
 		typeName = "string"
 	}
