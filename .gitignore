@@ -1,5 +1,10 @@
 example/*
 example2/*
+generator/db_test/pb_migrations
+generator/db_test/test_pb_data/storage
+*.ts
 *.exe
+*.db-shm
+*.db-wal
 *.txt
 .vscode
