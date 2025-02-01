@@ -237,6 +237,10 @@ func (p *Parser) collectStructMethods() {
 }
 
 func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field {
+	if len(field.Names) == 0 {
+		log.Fatalf("Generation failed because the `%v` template struct contains an anonymous embedded field. Do not modify the field set.", structName)
+	}
+
 	selectTypeName, selectOptions, selectVarNames := p.parseSelectTypeComment(field)
 	schemaName := p.parseAlternativeSchemaName(field)
 	if schemaName == "" {
