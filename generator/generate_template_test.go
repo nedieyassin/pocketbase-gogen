@@ -3,6 +3,8 @@ package generator_test
 import (
 	"bufio"
 	"bytes"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -90,7 +92,21 @@ func TestTemplate(t *testing.T) {
 }
 
 func TestTemplatePackageName(t *testing.T) {
-	
+	Template(nil, ".", "validpackagename")
+	Template(nil, ".", "valid_package_name")
+
+	if os.Getenv("BE_CRASHER") == "1" {
+		Template(nil, ".", "invalid-packagename")
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestTemplatePackageName")
+	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
+	err := cmd.Run()
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
+		return
+	}
+
+	t.Fatal("the invalid package name did not cause the template command to exit")
 }
 
 func separateTemplateStructs(templateFile []byte) []string {
