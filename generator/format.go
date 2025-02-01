@@ -75,10 +75,6 @@ func validatePackageName(packageName string) bool {
 
 func getterName(varName string) string {
 	getterName := strcase.ToCamel(varName)
-	if getterName == "Id" {
-		// Have to use GetId to not shadow the identically named core.Record.Id field
-		getterName = "Get" + getterName
-	}
 	return getterName
 }
 

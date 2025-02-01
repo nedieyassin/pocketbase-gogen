@@ -554,8 +554,10 @@ func rename(name string, existingNames map[string]any) string {
 func createFuncs(fields []*Field, declare func(f *Field) *ast.FuncDecl) []*ast.FuncDecl {
 	decls := make([]*ast.FuncDecl, 0, len(fields))
 	for _, f := range fields {
-		decl := declare(f)
-		decls = append(decls, decl)
+		if f.systemFieldName == "" {
+			decl := declare(f)
+			decls = append(decls, decl)
+		}
 	}
 
 	return decls
