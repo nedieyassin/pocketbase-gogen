@@ -241,6 +241,7 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 	if schemaName == "" {
 		schemaName = field.Names[0].Name
 	}
+	systemFieldName := p.parseSystemFieldNameComment(field)
 
 	fields := make([]*Field, len(field.Names))
 	for i, n := range field.Names {
@@ -249,6 +250,7 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 			structName,
 			fieldName,
 			schemaName,
+			systemFieldName,
 			field.Type,
 			selectTypeName,
 			selectOptions,
@@ -474,6 +476,32 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 
 	schemaname := strings.TrimSpace(comment[len(schemaNameComment):])
 	return schemaname
+}
+
+var systemFieldComment = "// system:"
+
+func (p *Parser) parseSystemFieldNameComment(field *ast.Field) string {
+	comment := ""
+	var astComment *ast.Comment
+	for _, c := range field.Doc.List {
+		if c.Text[:len(systemFieldComment)] == systemFieldComment {
+			comment = c.Text
+			astComment = c
+			break
+		}
+	}
+	if comment == "" {
+		return ""
+	}
+
+	if len(field.Names) > 1 {
+		pos := p.Fset.Position(astComment.Slash)
+		errMsg := "The // system: comment can only be used on fields with one identifier and should not be changed from its generated form."
+		p.logError(errMsg, pos, nil)
+	}
+
+	systemFieldName := strings.TrimSpace(comment[len(systemFieldComment):])
+	return systemFieldName
 }
 
 // A trailing underscore signals an identifier that could otherwise

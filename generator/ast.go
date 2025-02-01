@@ -41,6 +41,10 @@ type Field struct {
 	structName, fieldName, schemaName string
 	fieldType                         ast.Expr
 
+	// Only set for system fields
+	systemFieldName string
+
+	// Only set for select type fields
 	selectTypeName string
 	selectOptions  []string
 	selectVarNames []string
@@ -54,7 +58,8 @@ type Field struct {
 func newField(
 	structName,
 	fieldName,
-	schemaName string,
+	schemaName,
+	systemFieldName string,
 	fieldType ast.Expr,
 	selectTypeName string,
 	selectOptions []string,
@@ -64,16 +69,17 @@ func newField(
 	parser *Parser,
 ) *Field {
 	return &Field{
-		structName:     structName,
-		fieldName:      fieldName,
-		schemaName:     schemaName,
-		fieldType:      fieldType,
-		selectTypeName: selectTypeName,
-		selectOptions:  selectOptions,
-		selectVarNames: selectVarNames,
-		allProxyNames:  allProxyNames,
-		astOriginal:    astOriginal,
-		parser:         parser,
+		structName:      structName,
+		fieldName:       fieldName,
+		schemaName:      schemaName,
+		systemFieldName: systemFieldName,
+		fieldType:       fieldType,
+		selectTypeName:  selectTypeName,
+		selectOptions:   selectOptions,
+		selectVarNames:  selectVarNames,
+		allProxyNames:   allProxyNames,
+		astOriginal:     astOriginal,
+		parser:          parser,
 	}
 }
 

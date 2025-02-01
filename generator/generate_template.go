@@ -87,7 +87,7 @@ func (t *SchemaTranslator) translateFields(collection *core.Collection) *ast.Fie
 func (t *SchemaTranslator) translateField(field core.Field) *ast.Field {
 	ident := toIdentifier(field.GetName())
 	f := &ast.Field{
-		Doc: createSelectTypeComment(field),
+		Doc: createFieldDoc(field),
 		Names: []*ast.Ident{
 			ident,
 		},
@@ -142,7 +142,19 @@ func (t *SchemaTranslator) goType(field core.Field) ast.Expr {
 	return fieldType
 }
 
-func createSelectTypeComment(field core.Field) *ast.CommentGroup {
+func createFieldDoc(field core.Field) *ast.CommentGroup {
+	comments := make([]*ast.Comment, 0, 1)
+	if selectComment := createSelectTypeComment(field); selectComment != nil {
+		comments = append(comments, selectComment)
+	}
+	if systemComment := createSystemFieldComment(field); systemComment != nil {
+		comments = append(comments, systemComment)
+	}
+	doc := &ast.CommentGroup{List: comments}
+	return doc
+}
+
+func createSelectTypeComment(field core.Field) *ast.Comment {
 	selectField, ok := field.(*core.SelectField)
 	if !ok {
 		return nil
@@ -152,7 +164,8 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 
 	var sb strings.Builder
 
-	sb.WriteString(selectTypeComment + " ")
+	sb.WriteString(selectTypeComment)
+	sb.WriteString(" ")
 	sb.WriteString(selectTypeName)
 	sb.WriteString("(")
 	for i, o := range selectOptions {
@@ -164,11 +177,15 @@ func createSelectTypeComment(field core.Field) *ast.CommentGroup {
 	}
 	sb.WriteString(")")
 
-	comment := &ast.CommentGroup{
-		List: []*ast.Comment{{
-			Text: sb.String(),
-		}},
+	comment := &ast.Comment{Text: sb.String()}
+	return comment
+}
+
+func createSystemFieldComment(field core.Field) *ast.Comment {
+	if !field.GetSystem() {
+		return nil
 	}
+	comment := &ast.Comment{Text: systemFieldComment + " " + field.GetName()}
 	return comment
 }
 
