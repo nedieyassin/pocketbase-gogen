@@ -21,11 +21,10 @@ It takes in a PocketBase schema and generates a proxy struct for each collection
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
-	Run: func(cmd *cobra.Command, args []string) {
-	},
 }
 
 func init() {
+	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 	rootCmd.AddCommand(templateCmd)
 	rootCmd.AddCommand(generateCmd)
 }
