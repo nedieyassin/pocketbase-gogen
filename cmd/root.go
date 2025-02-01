@@ -91,10 +91,12 @@ func checkSchemaImportPath(path string) bool {
 func importSchema(dataSourcePath string) []*core.Collection {
 	viaPB := checkSchemaImportPath(dataSourcePath)
 	var collections []*core.Collection
+	var err error
 	if viaPB {
-		collections = generator.QuerySchema(dataSourcePath, false)
+		collections, err = generator.QuerySchema(dataSourcePath, false)
 	} else {
-		collections = generator.ParseSchemaJson(dataSourcePath, false)
+		collections, err = generator.ParseSchemaJson(dataSourcePath, false)
 	}
+	errCheck(err)
 	return collections
 }

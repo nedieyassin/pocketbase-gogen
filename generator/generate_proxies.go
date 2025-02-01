@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -16,30 +17,49 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-func Generate(template []byte, savePath, packageName string) []byte {
+var (
+	ErrEmbeddedField = errors.New("Generation failed because the `%v` template struct contains an anonymous embedded field.")
+)
+
+func Generate(template []byte, savePath, packageName string) ([]byte, error) {
 	if !validatePackageName(packageName) {
-		log.Fatalf("The package name %v is not valid.", packageName)
+		errMsg := fmt.Sprintf("The package name %v is not valid.", packageName)
+		return nil, errors.New(errMsg)
 	}
 
-	loadTemplateASTs()
-	loadPBInfo()
+	if err := loadTemplateASTs(); err != nil {
+		return nil, err
+	}
+	if err := loadPBInfo(); err != nil {
+		return nil, err
+	}
 
-	decls := proxiesFromGoTemplate(template)
+	decls, err := proxiesFromGoTemplate(template)
+	if err != nil {
+		return nil, err
+	}
+
 	f := wrapProxyDeclarations(decls, packageName)
 
 	f, fset := astpos.RewritePositions(f)
-	sourceCode := printAST(f, fset, savePath)
+	sourceCode, err := printAST(f, fset, savePath)
+	if err != nil {
+		return nil, err
+	}
 
-	checkPbShadows(sourceCode)
+	err = checkPbShadows(sourceCode)
+	if err != nil {
+		return nil, err
+	}
 
-	return sourceCode
+	return sourceCode, nil
 }
 
-func checkPbShadows(sourceCode []byte) {
+func checkPbShadows(sourceCode []byte) error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "shadowcheck.go", sourceCode, parser.SkipObjectResolution)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	conf := types.Config{Importer: &Importer{}}
@@ -48,7 +68,7 @@ func checkPbShadows(sourceCode []byte) {
 		// Do not check error here because type errors can happen
 		// with only a single file being checked w/o dependencies.
 		// We only want the scope names for the shadow check.
-		log.Fatal(err)
+		return err
 	}
 
 	scope := pkg.Scope()
@@ -69,12 +89,14 @@ func checkPbShadows(sourceCode []byte) {
 	}
 
 	if len(allShadows) > 0 {
-		log.Fatalf(`Can not generate proxy code because some of the generated names shadow names from PocketBase's core.Record struct. This prevents the internals of PocketBase to safely handle data.
+		errMsg := fmt.Sprintf(`Can not generate proxy code because some of the generated names shadow names from PocketBase's core.Record struct. This prevents the internals of PocketBase to safely handle data.
 Try renaming fields/methods in the template to escape the shadowing. Don't forget to use the '// schema-name:' comment when renaming fields.
 Additionally make sure that all the system fields in your template are marked by the '// system:' comment and do not change the generated system comments.
 The shadowed names are: %v`, allShadows)
+		return errors.New(errMsg)
 	}
 
+	return nil
 }
 
 func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
@@ -98,10 +120,16 @@ func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
 // in the template struct.
 // Fields with an unknown type are ignored with
 // a warning.
-func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
-	p := newParser(sourceCode)
+func proxiesFromGoTemplate(sourceCode []byte) ([]ast.Decl, error) {
+	p, err := newParser(sourceCode)
+	if err != nil {
+		return nil, err
+	}
 
-	proxyMethods := createProxyMethods(p)
+	proxyMethods, err := createProxyMethods(p)
+	if err != nil {
+		return nil, err
+	}
 
 	decls := make([]ast.Decl, 0, 25)
 	for _, s := range p.structSpecs {
@@ -114,8 +142,14 @@ func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
 		methods := proxyMethods[structName]
 		decls = append(decls, methods...)
 
-		getters := createFuncs(fields, newGetterDecl)
-		setters := createFuncs(fields, newSetterDecl)
+		getters, err := createFuncs(fields, newGetterDecl)
+		if err != nil {
+			return nil, err
+		}
+		setters, err := createFuncs(fields, newSetterDecl)
+		if err != nil {
+			return nil, err
+		}
 		for i, getter := range getters {
 			if getter == nil {
 				continue
@@ -124,7 +158,7 @@ func proxiesFromGoTemplate(sourceCode []byte) []ast.Decl {
 		}
 	}
 
-	return decls
+	return decls, nil
 }
 
 type Parser struct {
@@ -147,7 +181,7 @@ type Parser struct {
 	varToSelectType      map[string]string
 }
 
-func newParser(sourceCode []byte) *Parser {
+func newParser(sourceCode []byte) (*Parser, error) {
 	parser := &Parser{
 		sourceCode:           sourceCode,
 		selectTypeDups:       map[string]any{},
@@ -156,24 +190,33 @@ func newParser(sourceCode []byte) *Parser {
 		selectTypeToVarNames: map[string][]string{},
 		varToSelectType:      map[string]string{},
 	}
-	parser.parseFile()
+	if err := parser.parseFile(); err != nil {
+		return nil, err
+	}
+
 	parser.collectStructSpecs()
-	parser.collectStructFields()
+
+	if err := parser.collectStructFields(); err != nil {
+		return nil, err
+	}
+
 	parser.collectStructMethods()
-	return parser
+
+	return parser, nil
 }
 
-func (p *Parser) parseFile() {
+func (p *Parser) parseFile() error {
 	p.Fset = token.NewFileSet()
 
 	opts := parser.SkipObjectResolution |
 		parser.ParseComments
 	f, err := parser.ParseFile(p.Fset, "x.go", p.sourceCode, opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	p.fAst = f
+	return nil
 }
 
 func (p *Parser) collectStructSpecs() {
@@ -194,7 +237,7 @@ func (p *Parser) collectStructSpecs() {
 	p.structNames = names
 }
 
-func (p *Parser) collectStructFields() {
+func (p *Parser) collectStructFields() error {
 	p.structFields = make(map[string][]*Field)
 
 	for _, s := range p.structSpecs {
@@ -203,11 +246,16 @@ func (p *Parser) collectStructFields() {
 		fields := make([]*Field, 0, len(astFields))
 
 		for _, f := range astFields {
-			fields = append(fields, p.newFieldsFromAST(structName, f)...)
+			fs, err := p.newFieldsFromAST(structName, f)
+			if err != nil {
+				return err
+			}
+			fields = append(fields, fs...)
 		}
 
 		p.structFields[structName] = fields
 	}
+	return nil
 }
 
 func (p *Parser) collectStructMethods() {
@@ -224,7 +272,7 @@ func (p *Parser) collectStructMethods() {
 		}
 
 		recvType := baseType(recv.List[0].Type)
-		recvName := nodeString(recvType)
+		recvName, _ := nodeString(recvType)
 
 		_, ok = funcs[recvName]
 		if !ok {
@@ -236,17 +284,27 @@ func (p *Parser) collectStructMethods() {
 	p.structMethods = funcs
 }
 
-func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field {
+func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) ([]*Field, error) {
 	if len(field.Names) == 0 {
-		log.Fatalf("Generation failed because the `%v` template struct contains an anonymous embedded field.", structName)
+		return nil, ErrEmbeddedField
 	}
 
-	selectTypeName, selectOptions, selectVarNames := p.parseSelectTypeComment(field)
-	schemaName := p.parseAlternativeSchemaName(field)
+	selectTypeName, selectOptions, selectVarNames, err := p.parseSelectTypeComment(field)
+	if err != nil {
+		return nil, err
+	}
+	schemaName, err := p.parseAlternativeSchemaName(field)
+	if err != nil {
+		return nil, err
+	}
 	if schemaName == "" {
 		schemaName = field.Names[0].Name
 	}
-	systemFieldName := p.parseSystemFieldNameComment(field)
+
+	systemFieldName, err := p.parseSystemFieldNameComment(field)
+	if err != nil {
+		return nil, err
+	}
 
 	fields := make([]*Field, len(field.Names))
 	for i, n := range field.Names {
@@ -267,14 +325,14 @@ func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) []*Field 
 		fields[i] = field
 	}
 
-	return fields
+	return fields, nil
 }
 
 var selectTypeComment = "// select:"
 
-func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string, []string) {
+func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string, []string, error) {
 	if field.Doc == nil || len(field.Doc.List) == 0 {
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
 
 	comment := ""
@@ -287,41 +345,53 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string, []s
 		}
 	}
 	if comment == "" {
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
 
-	if nodeString(baseType(field.Type)) != "int" {
+	typeName, err := nodeString(baseType(field.Type))
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if typeName != "int" {
 		pos := p.Fset.Position(astComment.Slash)
-		p.logError("Cannot have // select: comment on field of type other than int or []int", pos, nil)
+		err = p.createError("Cannot have // select: comment on field of type other than int or []int", pos, nil)
+		return "", nil, nil, err
 	}
 
 	if len(field.Names) > 1 {
 		pos := p.Fset.Position(astComment.Slash)
 		errMsg := fmt.Sprintf("The // select: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, nil)
+		err = p.createError(errMsg, pos, nil)
+		return "", nil, nil, err
 	}
 
 	comment = strings.TrimSpace(comment[len(selectTypeComment):])
 
-	typeName, selectOptions, selectVarNames := p.parseSelectType(astComment.Slash, comment)
+	typeName, selectOptions, selectVarNames, err := p.parseSelectType(astComment.Slash, comment)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	typeName, selectOptions, selectVarNames = p.validateSelectType(astComment.Slash, typeName, selectOptions, selectVarNames)
 
-	return typeName, selectOptions, selectVarNames
+	return typeName, selectOptions, selectVarNames, nil
 }
 
 // Parses a string of the form 'TypeName(option1, option2, ...)' or
 // 'TypeName(option1, option2, ...)[VarName1, VarName2, ...]
 // Returns the [TypeName], the [option1, option1, ...] list and the [VarName1, VarName2, ...] list.
 // If the var name list is omitted the option names are reused as the var names.
-func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, []string, []string) {
+func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, []string, []string, error) {
 	parsed, err := parser.ParseExpr(typeStr)
 	if err != nil {
 		parserErr := err.(scanner.ErrorList)[0]
 		pos := p.Fset.Position(commentPos)
-		p.logError(parserErr.Msg, pos, parserErr)
+		return "", nil, nil, p.createError(parserErr.Msg, pos, parserErr)
 	}
 
-	withVarNames := p.checkBrackets(commentPos, parsed)
+	withVarNames, err := p.checkBrackets(commentPos, parsed)
+	if err != nil {
+		return "", nil, nil, err
+	}
 
 	typeName := ""
 	selectOptions := make([]string, 0, 8)
@@ -353,7 +423,10 @@ func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, 
 
 	if typeName == "" || len(selectOptions) == 0 {
 		pos := p.Fset.Position(commentPos)
-		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
+		err = p.createError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
+		if err != nil {
+			return "", nil, nil, err
+		}
 	}
 
 	if len(selectOptions) != len(selectVarNames) {
@@ -363,15 +436,16 @@ func (p *Parser) parseSelectType(commentPos token.Pos, typeStr string) (string, 
 			len(selectOptions),
 			len(selectVarNames),
 		)
-		p.logError(errMsg, pos, nil)
+		err = p.createError(errMsg, pos, nil)
+		return "", nil, nil, err
 	}
 
-	return typeName, selectOptions, selectVarNames
+	return typeName, selectOptions, selectVarNames, nil
 }
 
 // Checks if the // select: comment only has () or also includes []
 // Errors if neither are found. Returns true when the [] are present.
-func (p *Parser) checkBrackets(commentPos token.Pos, parsedComment ast.Node) bool {
+func (p *Parser) checkBrackets(commentPos token.Pos, parsedComment ast.Node) (bool, error) {
 	var indexExpr ast.Expr
 	var callExpr ast.Expr
 
@@ -390,10 +464,11 @@ func (p *Parser) checkBrackets(commentPos token.Pos, parsedComment ast.Node) boo
 	withOpts := callExpr != nil
 	if !withVarNames && !withOpts {
 		pos := p.Fset.Position(commentPos)
-		p.logError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
+		err := p.createError("Malformed // select: comment. Example usage: // select: TypeName(option1, option2)[VarName1, VarName2]", pos, nil)
+		return false, err
 	}
 
-	return withVarNames
+	return withVarNames, nil
 }
 
 func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selectOptions, selectVarNames []string) (string, []string, []string) {
@@ -455,7 +530,7 @@ func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, typeName str
 
 var schemaNameComment = "// schema-name:"
 
-func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
+func (p *Parser) parseAlternativeSchemaName(field *ast.Field) (string, error) {
 	if field.Doc == nil || len(field.Doc.List) == 0 {
 		return p.trailingUnderscoreName(field)
 	}
@@ -476,18 +551,18 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 	if len(field.Names) > 1 {
 		pos := p.Fset.Position(astComment.Slash)
 		errMsg := fmt.Sprintf("The // schema-name: comment can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, nil)
+		return "", p.createError(errMsg, pos, nil)
 	}
 
 	schemaname := strings.TrimSpace(comment[len(schemaNameComment):])
-	return schemaname
+	return schemaname, nil
 }
 
 var systemFieldComment = "// system:"
 
-func (p *Parser) parseSystemFieldNameComment(field *ast.Field) string {
+func (p *Parser) parseSystemFieldNameComment(field *ast.Field) (string, error) {
 	if field.Doc == nil || len(field.Doc.List) == 0 {
-		return ""
+		return "", nil
 	}
 
 	comment := ""
@@ -500,24 +575,24 @@ func (p *Parser) parseSystemFieldNameComment(field *ast.Field) string {
 		}
 	}
 	if comment == "" {
-		return ""
+		return "", nil
 	}
 
 	if len(field.Names) > 1 {
 		pos := p.Fset.Position(astComment.Slash)
 		errMsg := "The // system: comment can only be used on fields with one identifier and should not be changed from its generated form."
-		p.logError(errMsg, pos, nil)
+		return "", p.createError(errMsg, pos, nil)
 	}
 
 	systemFieldName := strings.TrimSpace(comment[len(systemFieldComment):])
-	return systemFieldName
+	return systemFieldName, nil
 }
 
 // A trailing underscore signals an identifier that could otherwise
 // not be used because it is a reserved go keyword like "type" or "func".
 // This function returns the identifier name without the trailing underscore.
 // If no trailing underscore is present, an empty string is returned.
-func (p *Parser) trailingUnderscoreName(field *ast.Field) string {
+func (p *Parser) trailingUnderscoreName(field *ast.Field) (string, error) {
 	tuName := ""
 	for _, n := range field.Names {
 		trimmed, ok := trimUnderscore(n.Name)
@@ -529,16 +604,17 @@ func (p *Parser) trailingUnderscoreName(field *ast.Field) string {
 	if tuName != "" && len(field.Names) > 1 {
 		pos := p.Fset.Position(field.Pos())
 		errMsg := fmt.Sprintf("Trailing underscore identifiers can only be used on fields with one identifier. Found %v.", len(field.Names))
-		p.logError(errMsg, pos, nil)
+		return "", p.createError(errMsg, pos, nil)
 	}
-	return tuName
+	return tuName, nil
 }
 
-func (p *Parser) logError(msg string, pos token.Position, origErr *scanner.Error) {
+func (p *Parser) createError(msg string, pos token.Position, origErr *scanner.Error) error {
 	if origErr != nil {
 		pos.Column = origErr.Pos.Column
 	}
-	log.Fatalf("Error: %v: %v", pos, msg)
+	errMsg := fmt.Sprintf("Error: %v: %v", pos, msg)
+	return errors.New(errMsg)
 }
 
 func (p *Parser) logWarning(msg string, pos token.Position, origErr *scanner.Error) {
@@ -560,16 +636,19 @@ func rename(name string, existingNames map[string]any) string {
 	return newName
 }
 
-func createFuncs(fields []*Field, declare func(f *Field) *ast.FuncDecl) []*ast.FuncDecl {
+func createFuncs(fields []*Field, declare func(f *Field) (*ast.FuncDecl, error)) ([]*ast.FuncDecl, error) {
 	decls := make([]*ast.FuncDecl, 0, len(fields))
 	for _, f := range fields {
 		if f.systemFieldName == "" {
-			decl := declare(f)
+			decl, err := declare(f)
+			if err != nil {
+				return nil, err
+			}
 			decls = append(decls, decl)
 		}
 	}
 
-	return decls
+	return decls, nil
 }
 
 func createSelectTypes(fields []*Field) []ast.Decl {

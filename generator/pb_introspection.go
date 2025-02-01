@@ -8,9 +8,10 @@ package generator
 // reduce maintenance.
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/types"
-	"log"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -32,15 +33,25 @@ type pocketBaseInfo struct {
 	baseProxyType *types.Named
 }
 
-func newPocketBaseInfo() *pocketBaseInfo {
-	info := &pocketBaseInfo{
-		pkg: loadPbCorePackage(),
+func newPocketBaseInfo() (*pocketBaseInfo, error) {
+	corePkg, err := loadPbCorePackage()
+	if err != nil {
+		return nil, err
 	}
-	info.collectRecordGetters()
-	info.collectRecordNames()
-	info.collectBaseProxyType()
 
-	return info
+	info := &pocketBaseInfo{pkg: corePkg}
+
+	if err := info.collectRecordGetters(); err != nil {
+		return nil, err
+	}
+	if err := info.collectRecordNames(); err != nil {
+		return nil, err
+	}
+	if err := info.collectBaseProxyType(); err != nil {
+		return nil, err
+	}
+
+	return info, nil
 }
 
 func (p *pocketBaseInfo) shadowsRecord(proxyStruct *types.Named) (bool, []string) {
@@ -56,41 +67,55 @@ func (p *pocketBaseInfo) shadowsRecord(proxyStruct *types.Named) (bool, []string
 	return len(shadowed) > 0, shadowed
 }
 
-func (p *pocketBaseInfo) collectRecordGetters() {
+func (p *pocketBaseInfo) collectRecordGetters() error {
 	pkg := p.pkg
 	recordSrcPath := filepath.Join(pkg.Dir, "record_model.go")
 
 	i := slices.Index(pkg.CompiledGoFiles, recordSrcPath)
 	if i == -1 {
-		log.Fatal("Could not find record_model.go")
+		return errors.New("Could not find record_model.go")
 	}
 
 	f := pkg.Syntax[i]
 	p.recordGetters = make(map[string]string)
 
+	var inspectErr error
 	ast.Inspect(f, func(n ast.Node) bool {
 		returnType := getterReturnType(n)
 		if returnType == nil {
 			return true
 		}
 
-		typeName := nodeString(returnType)
+		typeName, err := nodeString(returnType)
+		if err != nil {
+			inspectErr = err
+			return false
+		}
 		funcName := n.(*ast.FuncDecl).Name.Name
 		p.recordGetters[typeName] = funcName
 
 		return false
 	})
+	return inspectErr
 }
 
-func (p *pocketBaseInfo) collectRecordNames() {
+func (p *pocketBaseInfo) collectRecordNames() error {
 	recordObj := p.pkg.Types.Scope().Lookup("Record")
+	if recordObj == nil {
+		return errors.New("the Record struct object could not be found in the core package scope")
+	}
 	recordNamedType := recordObj.Type().(*types.Named)
 	p.allRecordNames = extractNamesWithEmbedded(recordNamedType, nil)
+	return nil
 }
 
-func (p *pocketBaseInfo) collectBaseProxyType() {
+func (p *pocketBaseInfo) collectBaseProxyType() error {
 	baseProxyObj := p.pkg.Types.Scope().Lookup("BaseRecordProxy")
+	if baseProxyObj == nil {
+		return errors.New("the BaseProxyRecord struct object could not be found in the core package scope")
+	}
 	p.baseProxyType = baseProxyObj.Type().(*types.Named)
+	return nil
 }
 
 func extractNamesWithEmbedded(namedStructType *types.Named, ignoreType *types.Named) map[string]any {
@@ -212,7 +237,7 @@ func getterReturnType(n ast.Node) ast.Expr {
 	return returnFields[0].Type
 }
 
-func loadPbCorePackage() *packages.Package {
+func loadPbCorePackage() (*packages.Package, error) {
 	importPath := "github.com/pocketbase/pocketbase/core"
 	conf := &packages.Config{
 		Mode: packages.NeedSyntax |
@@ -222,13 +247,14 @@ func loadPbCorePackage() *packages.Package {
 	}
 	pkgs, err := packages.Load(conf, importPath)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	if len(pkgs) != 1 {
-		log.Fatal("Error: Could not identify the pocketbase core package")
+		err = errors.New("Error: Could not identify the pocketbase core package")
+		return nil, err
 	}
 
-	return pkgs[0]
+	return pkgs[0], nil
 }
 
 func unwrapPointer(typ types.Type) types.Type {
@@ -250,7 +276,8 @@ func (i *Importer) Import(path string) (*types.Package, error) {
 		return nil, err
 	}
 	if len(pkgs) != 1 {
-		log.Fatalf("Could not identify package: %v", path)
+		errMsg := fmt.Sprintf("Could not identify package: %v", path)
+		return nil, errors.New(errMsg)
 	}
 	return pkgs[0].Types, nil
 }

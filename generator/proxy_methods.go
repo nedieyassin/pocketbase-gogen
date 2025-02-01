@@ -1,18 +1,18 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
-	"log"
 	"slices"
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-func createProxyMethods(parser *Parser) map[string][]ast.Decl {
+func createProxyMethods(parser *Parser) (map[string][]ast.Decl, error) {
 	conf := types.Config{Importer: &Importer{}}
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
@@ -20,7 +20,7 @@ func createProxyMethods(parser *Parser) map[string][]ast.Decl {
 	}
 	_, err := conf.Check("template", parser.Fset, []*ast.File{parser.fAst}, info)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	decls := make(map[string][]ast.Decl)
@@ -31,14 +31,17 @@ func createProxyMethods(parser *Parser) map[string][]ast.Decl {
 
 		proxyMethods := make([]ast.Decl, len(methods))
 		for i, m := range methods {
-			newMethodProxifier(m, fields, info, parser).proxify()
+			proxifier := newMethodProxifier(m, fields, info, parser)
+			if err := proxifier.proxify(); err != nil {
+				return nil, err
+			}
 			proxyMethods[i] = m
 		}
 
 		decls[structName] = proxyMethods
 	}
 
-	return decls
+	return decls, nil
 }
 
 type methodProxifier struct {
@@ -56,6 +59,8 @@ type methodProxifier struct {
 	// True when one of the AssignStmt children was replaced by a setter call
 	addedVars  bool
 	assignMove *assignMove
+
+	err error
 }
 
 func newMethodProxifier(
@@ -82,9 +87,10 @@ func newMethodProxifier(
 	return p
 }
 
-func (p *methodProxifier) proxify() {
+func (p *methodProxifier) proxify() error {
 	astutil.Apply(p.method.Body, replaceReassignment, nil)
 	astutil.Apply(p.method.Body, p.down, p.up)
+	return p.err
 }
 
 func (p *methodProxifier) traverseAssign(assign *ast.AssignStmt, direction astutil.ApplyFunc) {
@@ -132,6 +138,9 @@ func (p *methodProxifier) up(c *astutil.Cursor) bool {
 	switch n := c.Node().(type) {
 	case *ast.SelectorExpr:
 		p.proxifySelector(n, c)
+		if p.err != nil {
+			return false
+		}
 	case *ast.RangeStmt:
 		p.proxifyRangeStmt(n)
 	}
@@ -175,7 +184,7 @@ func (p *methodProxifier) applyAssignMove() {
 	for _, s := range p.assignMove.toMove {
 		i := slices.Index(assign.Lhs, s)
 		if i == -1 {
-			panic("Lift failed")
+			panic("AssignStmt move failed")
 		}
 		moved.Lhs = append(moved.Lhs, s)
 		moved.Rhs = append(moved.Rhs, assign.Rhs[i])
@@ -223,7 +232,9 @@ func (p *methodProxifier) proxifySelector(
 		block, insertIndex, lift := p.findSetterBlock(p.assignCursor.Parent(), assign)
 		if block == nil || insertIndex < 0 {
 			pos := p.parser.Fset.Position(assign.TokPos)
-			log.Fatalf("%v: An error ocurred while trying to convert the assign statement to a proxy setter call. Try using a different syntax.", pos)
+			errMsg := fmt.Sprintf("%v: An error ocurred while trying to convert the assign statement to a proxy setter call. Try using a different syntax.", pos)
+			p.err = errors.New(errMsg)
+			return
 		}
 
 		block.List = slices.Insert(block.List, insertIndex, setterCall)

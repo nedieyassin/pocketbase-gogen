@@ -58,10 +58,12 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	}
 
 	if directFlag {
-		templateSource = generator.Template(collections, args[1], packageName)
+		templateSource, err = generator.Template(collections, args[1], packageName)
+		errCheck(err)
 	}
 
-	sourceCode := generator.Generate(templateSource, args[1], packageName)
+	sourceCode, err := generator.Generate(templateSource, args[1], packageName)
+	errCheck(err)
 
 	out, err := os.Create(args[1])
 	errCheck(err)

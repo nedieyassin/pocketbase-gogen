@@ -3,8 +3,6 @@ package generator_test
 import (
 	"bufio"
 	"bytes"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -70,8 +68,16 @@ var expectedReservedGoNameCollectionStruct = `type WithReservedGoNames struct {
 `
 
 func TestTemplate(t *testing.T) {
-	collections := QuerySchema("./db_test/test_pb_data", false)
-	template := Template(collections, ".", "test")
+	collections, err := QuerySchema("./db_test/test_pb_data", false)
+	if err != nil {
+		t.Fatalf("Error during schema query: %v", err)
+	}
+
+	template, err := Template(collections, ".", "test")
+	if err != nil {
+		t.Fatalf("Error during template generation: %v", err)
+	}
+
 	structDefs := separateTemplateStructs(template)
 
 	if len(structDefs) != 3 {
@@ -92,21 +98,20 @@ func TestTemplate(t *testing.T) {
 }
 
 func TestTemplatePackageName(t *testing.T) {
-	Template(nil, ".", "validpackagename")
-	Template(nil, ".", "valid_package_name")
-
-	if os.Getenv("BE_CRASHER") == "1" {
-		Template(nil, ".", "invalid-packagename")
-		return
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=TestTemplatePackageName")
-	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
-	err := cmd.Run()
-	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
-		return
+	_, err := Template(nil, ".", "validpackagename")
+	if err != nil {
+		t.Fatalf("valid package name caused error: %v", err)
 	}
 
-	t.Fatal("the invalid package name did not cause the template command to exit")
+	_, err = Template(nil, ".", "valid_package_name")
+	if err != nil {
+		t.Fatalf("valid package name caused error: %v", err)
+	}
+
+	_, err = Template(nil, ".", "invalid-packagename")
+	if err == nil {
+		t.Fatal("the invalid package name did not cause an error")
+	}
 }
 
 func separateTemplateStructs(templateFile []byte) []string {

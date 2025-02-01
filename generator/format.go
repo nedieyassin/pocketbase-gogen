@@ -2,53 +2,56 @@ package generator
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
-	"log"
 	"strings"
 
 	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/imports"
 )
 
-func printAST(f *ast.File, fset *token.FileSet, filename string) []byte {
+func printAST(f *ast.File, fset *token.FileSet, filename string) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	if err := format.Node(buf, fset, f); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	sourceCode, err := imports.Process(filename, buf.Bytes(), nil)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	return sourceCode
+	return sourceCode, nil
 }
 
 // Converts an ast node to a string
-func nodeString(n ast.Node) string {
+func nodeString(n ast.Node) (string, error) {
 	fset := token.NewFileSet()
 	sb := &strings.Builder{}
 	err := format.Node(sb, fset, n)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
-func toIdentifier(s string) *ast.Ident {
-	validated := validateIdentifier(s)
-	return ast.NewIdent(validated)
+func toIdentifier(s string) (*ast.Ident, error) {
+	validated, err := validateIdentifier(s)
+	if err != nil {
+		return nil, err
+	}
+	return ast.NewIdent(validated), nil
 }
 
 // Validates if the given string s can be used
 // as an identifier in go source code.
 // If not, it appends a '_' and checks again.
 // Errors if the string is still not valid.
-func validateIdentifier(s string) string {
+func validateIdentifier(s string) (string, error) {
 	origS := s
 	parsed, err := parser.ParseExpr(s)
 	_, ok := parsed.(*ast.Ident)
@@ -59,10 +62,11 @@ func validateIdentifier(s string) string {
 		_, ok = parsed.(*ast.Ident)
 	}
 	if err != nil || !ok {
-		log.Fatalf("Error: Encoutered `%v`, which can not be used as a go identifier", origS)
+		errMsg := fmt.Sprintf("Error: Encoutered `%v`, which can not be used as a go identifier", origS)
+		return "", errors.New(errMsg)
 	}
 
-	return s
+	return s, nil
 }
 
 // Returns true if the given string can be used as a package name

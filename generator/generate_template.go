@@ -1,10 +1,11 @@
 package generator
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"log"
 	"strings"
 
 	"github.com/iancoleman/strcase"
@@ -13,19 +14,26 @@ import (
 )
 
 // Generates the template and returns the source code bytes
-func Template(collections []*core.Collection, savePath, packageName string) []byte {
+func Template(collections []*core.Collection, savePath, packageName string) ([]byte, error) {
 	if !validatePackageName(packageName) {
-		log.Fatalf("The package name %v is not valid.", packageName)
+		errMsg := fmt.Sprintf("The package name %v is not valid.", packageName)
+		return nil, errors.New(errMsg)
 	}
 
 	translator := newSchemaTranslator(collections)
-	decls := translator.translate()
+	decls, err := translator.translate()
+	if err != nil {
+		return nil, err
+	}
 	f := wrapTemplateDeclarations(decls, packageName)
 
 	f, fset := astpos.RewritePositions(f)
-	sourceCode := printAST(f, fset, savePath)
+	sourceCode, err := printAST(f, fset, savePath)
+	if err != nil {
+		return nil, err
+	}
 
-	return sourceCode
+	return sourceCode, nil
 }
 
 type SchemaTranslator struct {
@@ -46,45 +54,55 @@ func newSchemaTranslator(collections []*core.Collection) *SchemaTranslator {
 }
 
 // Translates the collections into one struct declaration each
-func (t *SchemaTranslator) translate() []ast.Decl {
+func (t *SchemaTranslator) translate() ([]ast.Decl, error) {
 	decls := make([]ast.Decl, 0, 2*len(t.collections))
 	for _, collection := range t.collections {
+		structSpec, err := t.collectionToStruct(collection)
+		if err != nil {
+			return nil, err
+		}
 		decl := &ast.GenDecl{
 			Tok:   token.TYPE,
-			Specs: []ast.Spec{t.collectionToStruct(collection)},
+			Specs: []ast.Spec{structSpec},
 		}
 		decls = append(decls, decl)
 
 	}
 
-	return decls
+	return decls, nil
 }
 
-func (t *SchemaTranslator) collectionToStruct(collection *core.Collection) *ast.TypeSpec {
-	structType := &ast.StructType{
-		Fields: t.translateFields(collection),
+func (t *SchemaTranslator) collectionToStruct(collection *core.Collection) (*ast.TypeSpec, error) {
+	fields, err := t.translateFields(collection)
+	if err != nil {
+		return nil, err
 	}
+	structType := &ast.StructType{Fields: fields}
 	spec := &ast.TypeSpec{
 		Name: ast.NewIdent(strcase.ToCamel(collection.Name)),
 		Type: structType,
 	}
-	return spec
+	return spec, nil
 }
 
-func (t *SchemaTranslator) translateFields(collection *core.Collection) *ast.FieldList {
+func (t *SchemaTranslator) translateFields(collection *core.Collection) (*ast.FieldList, error) {
 	fields := make([]*ast.Field, len(collection.Fields))
 	for i, f := range collection.Fields {
-		fields[i] = t.translateField(f)
+		translated, err := t.translateField(f)
+		if err != nil {
+			return nil, err
+		}
+		fields[i] = translated
 	}
 	fieldList := &ast.FieldList{
 		List:    fields,
 		Opening: 1,
 		Closing: 1,
 	}
-	return fieldList
+	return fieldList, nil
 }
 
-func (t *SchemaTranslator) translateField(field core.Field) *ast.Field {
+func (t *SchemaTranslator) translateField(field core.Field) (*ast.Field, error) {
 	fieldName := field.GetName()
 
 	if fieldName == "id" {
@@ -94,16 +112,25 @@ func (t *SchemaTranslator) translateField(field core.Field) *ast.Field {
 		fieldName = "Id"
 	}
 
-	ident := toIdentifier(fieldName)
+	ident, err := toIdentifier(fieldName)
+	if err != nil {
+		return nil, err
+	}
+
+	fieldDoc, err := createFieldDoc(field)
+	if err != nil {
+		return nil, err
+	}
+
 	f := &ast.Field{
-		Doc: createFieldDoc(field),
+		Doc: fieldDoc,
 		Names: []*ast.Ident{
 			ident,
 		},
 		Type: t.goType(field),
 	}
 
-	return f
+	return f, nil
 }
 
 func (t *SchemaTranslator) goType(field core.Field) ast.Expr {
@@ -151,22 +178,26 @@ func (t *SchemaTranslator) goType(field core.Field) ast.Expr {
 	return fieldType
 }
 
-func createFieldDoc(field core.Field) *ast.CommentGroup {
+func createFieldDoc(field core.Field) (*ast.CommentGroup, error) {
 	comments := make([]*ast.Comment, 0, 1)
-	if selectComment := createSelectTypeComment(field); selectComment != nil {
+	selectComment, err := createSelectTypeComment(field)
+	if err != nil {
+		return nil, err
+	}
+	if selectComment != nil {
 		comments = append(comments, selectComment)
 	}
 	if systemComment := createSystemFieldComment(field); systemComment != nil {
 		comments = append(comments, systemComment)
 	}
 	doc := &ast.CommentGroup{List: comments}
-	return doc
+	return doc, nil
 }
 
-func createSelectTypeComment(field core.Field) *ast.Comment {
+func createSelectTypeComment(field core.Field) (*ast.Comment, error) {
 	selectField, ok := field.(*core.SelectField)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	selectTypeName := strcase.ToCamel(selectField.Name) + "SelectType"
 	selectOptions := selectField.Values
@@ -178,7 +209,10 @@ func createSelectTypeComment(field core.Field) *ast.Comment {
 	sb.WriteString(selectTypeName)
 	sb.WriteString("(")
 	for i, o := range selectOptions {
-		o = validateIdentifier(o)
+		o, err := validateIdentifier(o)
+		if err != nil {
+			return nil, err
+		}
 		sb.WriteString(o)
 		if i < len(selectOptions)-1 {
 			sb.WriteString(", ")
@@ -187,7 +221,7 @@ func createSelectTypeComment(field core.Field) *ast.Comment {
 	sb.WriteString(")")
 
 	comment := &ast.Comment{Text: sb.String()}
-	return comment
+	return comment, nil
 }
 
 func createSystemFieldComment(field core.Field) *ast.Comment {

@@ -1,11 +1,11 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"log"
 
 	"github.com/go-toolsmith/astcopy"
 	"github.com/iancoleman/strcase"
@@ -83,11 +83,11 @@ func newField(
 	}
 }
 
-func loadTemplateASTs() {
+func loadTemplateASTs() error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, ".", proxyTemplateCode, parser.SkipObjectResolution)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	structTemplate = f.Decls[0].(*ast.GenDecl)
@@ -103,11 +103,18 @@ func loadTemplateASTs() {
 	multiRelationSetterTemplate = f.Decls[8].(*ast.FuncDecl)
 	selectSetterTemplate = f.Decls[9].(*ast.FuncDecl)
 	multiSelectSetterTemplate = f.Decls[10].(*ast.FuncDecl)
+
+	return nil
 }
 
-func loadPBInfo() {
-	pbInfo = newPocketBaseInfo()
-	primitiveGetters = pbInfo.recordGetters
+func loadPBInfo() error {
+	info, err := newPocketBaseInfo()
+	if err != nil {
+		return err
+	}
+	pbInfo = info
+	primitiveGetters = info.recordGetters
+	return nil
 }
 
 func newProxyDecl(name string, doc *ast.CommentGroup) *ast.GenDecl {
@@ -118,12 +125,15 @@ func newProxyDecl(name string, doc *ast.CommentGroup) *ast.GenDecl {
 	return proxy
 }
 
-func newGetterDecl(field *Field) *ast.FuncDecl {
+func newGetterDecl(field *Field) (*ast.FuncDecl, error) {
 	if field.selectTypeName != "" {
 		return newSelectGetterDecl(field)
 	}
 
-	returnTypeName := nodeString(field.fieldType)
+	returnTypeName, err := nodeString(field.fieldType)
+	if err != nil {
+		return nil, err
+	}
 	getterName, ok := primitiveGetters[returnTypeName]
 	if !ok {
 		return newRelGetterDecl(field)
@@ -132,10 +142,10 @@ func newGetterDecl(field *Field) *ast.FuncDecl {
 	return newPrimitiveGetterDecl(field, getterName)
 }
 
-func newPrimitiveGetterDecl(field *Field, recordGetterName string) *ast.FuncDecl {
+func newPrimitiveGetterDecl(field *Field, recordGetterName string) (*ast.FuncDecl, error) {
 	decl := astcopy.FuncDecl(getterTemplate)
 
-	adaptFuncTemplate(
+	err := adaptFuncTemplate(
 		decl,
 		field.structName,
 		getterName(field.fieldName),
@@ -144,26 +154,35 @@ func newPrimitiveGetterDecl(field *Field, recordGetterName string) *ast.FuncDecl
 		field.schemaName,
 		field.fieldType,
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return decl
+	return decl, nil
 }
 
-func newRelGetterDecl(field *Field) *ast.FuncDecl {
+func newRelGetterDecl(field *Field) (*ast.FuncDecl, error) {
 	fieldType := field.fieldType
 	fieldName := field.fieldName
 
 	relType := baseType(fieldType)
-	relTypeName := nodeString(relType)
+	relTypeName, err := nodeString(relType)
+	if err != nil {
+		return nil, err
+	}
 	_, ok := field.allProxyNames[relTypeName]
 	if !ok {
-		returnTypeName := nodeString(fieldType)
+		returnTypeName, err := nodeString(fieldType)
+		if err != nil {
+			return nil, err
+		}
 		pos := field.parser.Fset.Position(field.astOriginal.Pos())
 		errMsg := fmt.Sprintf(
 			"Unable to generate relation getter/setter for field `%v` of type %v. All relation fields must have the related type also be a proxy.",
 			fieldName, returnTypeName,
 		)
-		field.parser.logWarning(errMsg, pos, nil)
-		return nil
+		err = field.parser.createError(errMsg, pos, nil)
+		return nil, err
 	}
 
 	var decl *ast.FuncDecl
@@ -174,7 +193,7 @@ func newRelGetterDecl(field *Field) *ast.FuncDecl {
 		decl = astcopy.FuncDecl(multiRelationGetterTemplate)
 	}
 
-	adaptFuncTemplate(
+	err = adaptFuncTemplate(
 		decl,
 		field.structName,
 		getterName(fieldName),
@@ -183,11 +202,14 @@ func newRelGetterDecl(field *Field) *ast.FuncDecl {
 		field.schemaName,
 		relType,
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return decl
+	return decl, nil
 }
 
-func newSelectGetterDecl(field *Field) *ast.FuncDecl {
+func newSelectGetterDecl(field *Field) (*ast.FuncDecl, error) {
 	var decl *ast.FuncDecl
 	if relationType(field.fieldType) == singleRel {
 		decl = astcopy.FuncDecl(selectGetterTemplate)
@@ -195,7 +217,7 @@ func newSelectGetterDecl(field *Field) *ast.FuncDecl {
 		decl = astcopy.FuncDecl(multiSelectGetterTemplate)
 	}
 
-	adaptFuncTemplate(
+	err := adaptFuncTemplate(
 		decl,
 		field.structName,
 		getterName(field.fieldName),
@@ -204,11 +226,14 @@ func newSelectGetterDecl(field *Field) *ast.FuncDecl {
 		field.schemaName,
 		&ast.Ident{Name: field.selectTypeName},
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return decl
+	return decl, nil
 }
 
-func newSetterDecl(field *Field) *ast.FuncDecl {
+func newSetterDecl(field *Field) (*ast.FuncDecl, error) {
 	fieldName := field.fieldName
 	fieldType := field.fieldType
 
@@ -216,7 +241,10 @@ func newSetterDecl(field *Field) *ast.FuncDecl {
 
 	switch field.selectTypeName {
 	case "":
-		returnTypeName := nodeString(fieldType)
+		returnTypeName, err := nodeString(fieldType)
+		if err != nil {
+			return nil, err
+		}
 		_, ok := primitiveGetters[returnTypeName]
 		if !ok {
 			return newRelSetterDecl(field)
@@ -232,7 +260,7 @@ func newSetterDecl(field *Field) *ast.FuncDecl {
 		}
 	}
 
-	adaptFuncTemplate(
+	err := adaptFuncTemplate(
 		decl,
 		field.structName,
 		setterName(fieldName),
@@ -241,20 +269,27 @@ func newSetterDecl(field *Field) *ast.FuncDecl {
 		field.schemaName,
 		fieldType,
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return decl
+	return decl, nil
 }
 
-func newRelSetterDecl(field *Field) *ast.FuncDecl {
+func newRelSetterDecl(field *Field) (*ast.FuncDecl, error) {
 	fieldType := field.fieldType
 	fieldName := field.fieldName
 
 	relType := baseType(fieldType)
-	relTypeName := nodeString(relType)
+	relTypeName, err := nodeString(relType)
+	if err != nil {
+		return nil, err
+	}
 	_, ok := field.allProxyNames[relTypeName]
 	if !ok {
 		// The warning will be logged by newRelGetterDecl
-		return nil
+		errMsg := fmt.Sprintf("Could not identify the relation field type `%v` on the `%v.%v` field", relTypeName, field.structName, fieldName)
+		return nil, errors.New(errMsg)
 	}
 
 	var decl *ast.FuncDecl
@@ -265,7 +300,7 @@ func newRelSetterDecl(field *Field) *ast.FuncDecl {
 		decl = astcopy.FuncDecl(multiRelationSetterTemplate)
 	}
 
-	adaptFuncTemplate(
+	err = adaptFuncTemplate(
 		decl,
 		field.structName,
 		setterName(fieldName),
@@ -274,8 +309,11 @@ func newRelSetterDecl(field *Field) *ast.FuncDecl {
 		field.schemaName,
 		relType,
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return decl
+	return decl, nil
 }
 
 // Scans a function declaration template for a set of pre-defined
@@ -288,7 +326,8 @@ func adaptFuncTemplate(
 	fieldName,
 	schemaFieldName string,
 	fieldType ast.Expr,
-) {
+) error {
+	var adapterErr error
 	adapter := func(c *astutil.Cursor) bool {
 		switch n := c.Node().(type) {
 		case *ast.Ident:
@@ -305,10 +344,18 @@ func adaptFuncTemplate(
 					n.Name += "_"
 				}
 			case "selectNameMap":
-				baseTypeName := nodeString(baseType(fieldType))
+				baseTypeName, err := nodeString(baseType(fieldType))
+				if err != nil {
+					adapterErr = err
+					return false
+				}
 				n.Name = selectNameMapName(baseTypeName)
 			case "selectIotaMap":
-				baseTypeName := nodeString(baseType(fieldType))
+				baseTypeName, err := nodeString(baseType(fieldType))
+				if err != nil {
+					adapterErr = err
+					return false
+				}
 				n.Name = selectIotaMapName(baseTypeName)
 			case "FieldType":
 				c.Replace(fieldType)
@@ -323,6 +370,8 @@ func adaptFuncTemplate(
 	}
 
 	astutil.Apply(template, adapter, nil)
+
+	return adapterErr
 }
 
 func newSelectTypeDecl(name string) *ast.GenDecl {

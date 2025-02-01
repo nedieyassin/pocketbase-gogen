@@ -46,7 +46,8 @@ func runTemplate(cmd *cobra.Command, args []string) {
 		packageName = dirNameFromFilePath(args[1])
 	}
 
-	sourceCode := generator.Template(collections, args[1], packageName)
+	sourceCode, err := generator.Template(collections, args[1], packageName)
+	errCheck(err)
 
 	out, err := os.Create(args[1])
 	errCheck(err)
