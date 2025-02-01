@@ -99,8 +99,9 @@ func loadTemplateASTs() {
 	multiSelectSetterTemplate = f.Decls[10].(*ast.FuncDecl)
 }
 
-func loadRecordGetters() {
-	primitiveGetters = recordGetters()
+func loadPBInfo() {
+	pbInfo = newPocketBaseInfo()
+	primitiveGetters = pbInfo.recordGetters
 }
 
 func newProxyDecl(name string, doc *ast.CommentGroup) *ast.GenDecl {

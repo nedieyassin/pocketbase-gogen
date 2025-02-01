@@ -9,54 +9,150 @@ package generator
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
+	"go/types"
 	"log"
-	"os"
+	"maps"
 	"path/filepath"
+	"slices"
 
 	"golang.org/x/tools/go/packages"
 )
 
-// Introspects the pocketbase core.Record code and
-// returns the available getters as a map of
-// [return type string] -> [method name].
-// E.g. "bool" -> "GetBool"
-func recordGetters() map[string]string {
-	filepath := findRecordSourceCodePath()
+var pbInfo *pocketBaseInfo
 
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, filepath, nil, parser.SkipObjectResolution)
-	if err != nil {
-		log.Fatal(err)
-	}
+type pocketBaseInfo struct {
+	pkg *packages.Package
 
-	getters := collectGetters(f)
+	// Return type string -> method name
+	recordGetters map[string]string
 
-	nameMap := make(map[string]string, len(getters))
-	for k, v := range getters {
-		nameMap[nodeString(k)] = v
-	}
+	// All exported names of *core.Record
+	allRecordNames map[string]any
 
-	return nameMap
+	baseProxyType *types.Named
 }
 
-func collectGetters(root ast.Node) map[ast.Expr]string {
-	getters := make(map[ast.Expr]string)
+func newPocketBaseInfo() *pocketBaseInfo {
+	info := &pocketBaseInfo{
+		pkg: loadPbCorePackage(),
+	}
+	info.collectRecordGetters()
+	info.collectRecordNames()
+	info.collectBaseProxyType()
 
-	ast.Inspect(root, func(n ast.Node) bool {
+	return info
+}
+
+func (p *pocketBaseInfo) shadowsRecord(proxyStruct *types.Named) (bool, []string) {
+	proxyNames := extractNamesWithEmbedded(proxyStruct, p.baseProxyType)
+	shadowed := make([]string, 0)
+
+	for name := range proxyNames {
+		if _, ok := p.allRecordNames[name]; ok {
+			shadowed = append(shadowed, name)
+		}
+	}
+
+	return len(shadowed) > 0, shadowed
+}
+
+func (p *pocketBaseInfo) collectRecordGetters() {
+	pkg := p.pkg
+	recordSrcPath := filepath.Join(pkg.Dir, "record_model.go")
+
+	i := slices.Index(pkg.CompiledGoFiles, recordSrcPath)
+	if i == -1 {
+		log.Fatal("Could not find record_model.go")
+	}
+
+	f := pkg.Syntax[i]
+	p.recordGetters = make(map[string]string)
+
+	ast.Inspect(f, func(n ast.Node) bool {
 		returnType := getterReturnType(n)
 		if returnType == nil {
 			return true
 		}
 
+		typeName := nodeString(returnType)
 		funcName := n.(*ast.FuncDecl).Name.Name
-		getters[returnType] = funcName
+		p.recordGetters[typeName] = funcName
 
 		return false
 	})
+}
 
-	return getters
+func (p *pocketBaseInfo) collectRecordNames() {
+	recordObj := p.pkg.Types.Scope().Lookup("Record")
+	recordNamedType := recordObj.Type().(*types.Named)
+	p.allRecordNames = extractNamesWithEmbedded(recordNamedType, nil)
+}
+
+func (p *pocketBaseInfo) collectBaseProxyType() {
+	baseProxyObj := p.pkg.Types.Scope().Lookup("BaseRecordProxy")
+	p.baseProxyType = baseProxyObj.Type().(*types.Named)
+}
+
+func extractNamesWithEmbedded(namedStructType *types.Named, ignoreType *types.Named) map[string]any {
+	allNames := make(map[string]any)
+	queue := []*types.Named{namedStructType}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		names, embedded := extractNames(current)
+		for _, e := range embedded {
+			if ignoreType == nil || e.Obj().Name() != ignoreType.Obj().Name() {
+				queue = append(queue, e)
+			}
+		}
+		maps.Copy(allNames, names)
+	}
+	return allNames
+}
+
+// Returns the exported names (fields and methods) of the struct as a map
+// and the exported embedded types as a list.
+func extractNames(namedStructType *types.Named) (map[string]any, []*types.Named) {
+	names := make(map[string]any)
+	embedded := make([]*types.Named, 0)
+
+	structType, ok := namedStructType.Underlying().(*types.Struct)
+	if !ok {
+		return names, embedded
+	}
+
+	pointerType := types.NewPointer(namedStructType)
+	methodSet := types.NewMethodSet(pointerType)
+	_ = methodSet
+
+	for i := range methodSet.Len() {
+		selection := methodSet.At(i)
+		funcType := selection.Obj().(*types.Func)
+		recv := funcType.Signature().Recv()
+		pointerRecv, ok := recv.Type().(*types.Pointer)
+		if !ok {
+			continue
+		}
+		recvType := pointerRecv.Elem()
+		if funcType.Exported() && types.Identical(recvType, namedStructType) {
+			funcName := funcType.Name()
+			names[funcName] = struct{}{}
+		}
+	}
+
+	for i := range structType.NumFields() {
+		field := structType.Field(i)
+		if field.Exported() && !field.Anonymous() {
+			names[field.Name()] = struct{}{}
+		} else if field.Exported() && field.Anonymous() {
+			named, ok := unwrapPointer(field.Type()).(*types.Named)
+			if ok {
+				embedded = append(embedded, named)
+			}
+		}
+	}
+
+	return names, embedded
 }
 
 // Checks if the node n is a specific getter method
@@ -116,22 +212,45 @@ func getterReturnType(n ast.Node) ast.Expr {
 	return returnFields[0].Type
 }
 
-func findRecordSourceCodePath() string {
+func loadPbCorePackage() *packages.Package {
 	importPath := "github.com/pocketbase/pocketbase/core"
-	packages, err := packages.Load(&packages.Config{Mode: packages.NeedFiles}, importPath)
+	conf := &packages.Config{
+		Mode: packages.NeedSyntax |
+			packages.NeedTypes |
+			packages.NeedCompiledGoFiles |
+			packages.NeedFiles,
+	}
+	pkgs, err := packages.Load(conf, importPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if len(packages) != 1 {
-		log.Fatal("Error: Could not identify the pocketbase package directory")
+	if len(pkgs) != 1 {
+		log.Fatal("Error: Could not identify the pocketbase core package")
 	}
 
-	recordModelFilepath := filepath.Join(packages[0].Dir, "record_model.go")
+	return pkgs[0]
+}
 
-	_, err = os.Stat(recordModelFilepath)
+func unwrapPointer(typ types.Type) types.Type {
+	pointer, ok := typ.(*types.Pointer)
+	if ok {
+		return pointer.Elem()
+	}
+	return typ
+}
+
+type Importer struct{}
+
+func (i *Importer) Import(path string) (*types.Package, error) {
+	conf := &packages.Config{
+		Mode: packages.NeedTypes,
+	}
+	pkgs, err := packages.Load(conf, path)
 	if err != nil {
-		log.Fatal("Error: The record_model.go source code file could not be found")
+		return nil, err
 	}
-
-	return recordModelFilepath
+	if len(pkgs) != 1 {
+		log.Fatalf("Could not identify package: %v", path)
+	}
+	return pkgs[0].Types, nil
 }

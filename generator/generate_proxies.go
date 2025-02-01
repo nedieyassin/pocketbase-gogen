@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
+	"go/types"
 	"log"
 	"slices"
 	"strings"
@@ -21,7 +22,7 @@ func Generate(template []byte, savePath, packageName string) []byte {
 	}
 
 	loadTemplateASTs()
-	loadRecordGetters()
+	loadPBInfo()
 
 	decls := proxiesFromGoTemplate(template)
 	f := wrapProxyDeclarations(decls, packageName)
@@ -29,7 +30,47 @@ func Generate(template []byte, savePath, packageName string) []byte {
 	f, fset := astpos.RewritePositions(f)
 	sourceCode := printAST(f, fset, savePath)
 
+	checkPbShadows(sourceCode)
+
 	return sourceCode
+}
+
+func checkPbShadows(sourceCode []byte) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", sourceCode, parser.SkipObjectResolution)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	conf := types.Config{Importer: &Importer{}}
+	pkg, err := conf.Check("x", fset, []*ast.File{f}, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	scope := pkg.Scope()
+	names := scope.Names()
+	allShadows := make([]string, 0)
+	for _, name := range names {
+		obj := scope.Lookup(name)
+		proxyType, ok := obj.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		_, ok = proxyType.Underlying().(*types.Struct)
+		if !ok {
+			continue
+		}
+		_, shadows := pbInfo.shadowsRecord(proxyType)
+		allShadows = append(allShadows, shadows...)
+	}
+
+	if len(allShadows) > 0 {
+		log.Fatalf(`Can not generate proxy code because some of the generated names shadow names from PocketBase's core.Record struct. This prevents the internals of PocketBase to safely handle data.
+Try renaming fields/methods in the template to escape the shadowing. Don't forget to use the '// schema-name:' comment when renaming fields.
+The shadowed names are: %v`, allShadows)
+	}
+
 }
 
 func wrapProxyDeclarations(decls []ast.Decl, packageName string) *ast.File {
