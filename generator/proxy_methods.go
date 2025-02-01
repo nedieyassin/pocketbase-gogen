@@ -210,11 +210,15 @@ func (p *methodProxifier) proxifySelector(
 
 	if isLhsAssign {
 		replacement, setterCall := p.setterOr(selector)
-		if setterCall == nil {
+		switch replacement.(type) {
+		case ast.Stmt:
 			p.assignCursor.Replace(replacement)
+		case ast.Expr:
+			c.Replace(replacement)
+		}
+		if setterCall == nil {
 			return
 		}
-		c.Replace(replacement)
 
 		block, insertIndex, lift := p.findSetterBlock(p.assignCursor.Parent(), assign)
 		if block == nil || insertIndex < 0 {
