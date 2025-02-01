@@ -275,7 +275,7 @@ func (p *Parser) parseSelectTypeComment(field *ast.Field) (string, []string, []s
 	comment := ""
 	var astComment *ast.Comment
 	for _, c := range field.Doc.List {
-		if c.Text[:len(selectTypeComment)] == selectTypeComment {
+		if len(c.Text) >= len(selectTypeComment) && c.Text[:len(selectTypeComment)] == selectTypeComment {
 			comment = c.Text
 			astComment = c
 			break
@@ -458,7 +458,7 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 	comment := ""
 	var astComment *ast.Comment
 	for _, c := range field.Doc.List {
-		if c.Text[:len(schemaNameComment)] == schemaNameComment {
+		if len(c.Text) >= len(schemaNameComment) && c.Text[:len(schemaNameComment)] == schemaNameComment {
 			comment = c.Text
 			astComment = c
 			break
@@ -481,10 +481,14 @@ func (p *Parser) parseAlternativeSchemaName(field *ast.Field) string {
 var systemFieldComment = "// system:"
 
 func (p *Parser) parseSystemFieldNameComment(field *ast.Field) string {
+	if field.Doc == nil || len(field.Doc.List) == 0 {
+		return ""
+	}
+
 	comment := ""
 	var astComment *ast.Comment
 	for _, c := range field.Doc.List {
-		if c.Text[:len(systemFieldComment)] == systemFieldComment {
+		if len(c.Text) >= len(systemFieldComment) && c.Text[:len(systemFieldComment)] == systemFieldComment {
 			comment = c.Text
 			astComment = c
 			break
