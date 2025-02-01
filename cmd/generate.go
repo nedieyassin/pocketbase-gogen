@@ -69,7 +69,7 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	_, err = out.Write(sourceCode)
 	errCheck(err)
 
-	log.Println("Saved the generated code to %v", args[1])
+	log.Printf("Saved the generated code to %v", args[1])
 	return
 }
 
