@@ -71,6 +71,7 @@ func checkPbShadows(sourceCode []byte) {
 	if len(allShadows) > 0 {
 		log.Fatalf(`Can not generate proxy code because some of the generated names shadow names from PocketBase's core.Record struct. This prevents the internals of PocketBase to safely handle data.
 Try renaming fields/methods in the template to escape the shadowing. Don't forget to use the '// schema-name:' comment when renaming fields.
+Additionally make sure that all the system fields in your template are marked by the '// system:' comment and do not change the generated system comments.
 The shadowed names are: %v`, allShadows)
 	}
 
