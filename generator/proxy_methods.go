@@ -3,7 +3,6 @@ package generator
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/token"
 	"go/types"
 	"log"
@@ -14,7 +13,7 @@ import (
 )
 
 func createProxyMethods(parser *Parser) map[string][]ast.Decl {
-	conf := types.Config{Importer: importer.Default()}
+	conf := types.Config{Importer: &Importer{}}
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
@@ -48,7 +47,7 @@ type methodProxifier struct {
 	allProxyNames    map[string]*ast.TypeSpec
 	parser           *Parser
 
-	typeInfo   *types.Info
+	typeInfo *types.Info
 
 	newIdents map[string]any
 

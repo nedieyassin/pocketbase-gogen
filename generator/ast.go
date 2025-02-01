@@ -280,7 +280,7 @@ func adaptFuncTemplate(
 	funcName,
 	getterFuncName,
 	fieldName,
-	schemaName string,
+	schemaFieldName string,
 	fieldType ast.Expr,
 ) {
 	adapter := func(c *astutil.Cursor) bool {
@@ -309,7 +309,7 @@ func adaptFuncTemplate(
 			}
 		case *ast.BasicLit:
 			if n.Value == "\"key\"" {
-				keyLiteral := fmt.Sprintf("\"%v\"", schemaName)
+				keyLiteral := fmt.Sprintf("\"%v\"", schemaFieldName)
 				n.Value = keyLiteral
 			}
 		}

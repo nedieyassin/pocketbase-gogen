@@ -37,14 +37,17 @@ func Generate(template []byte, savePath, packageName string) []byte {
 
 func checkPbShadows(sourceCode []byte) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "x.go", sourceCode, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, "shadowcheck.go", sourceCode, parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	conf := types.Config{Importer: &Importer{}}
 	pkg, err := conf.Check("x", fset, []*ast.File{f}, nil)
-	if err != nil {
+	if pkg == nil {
+		// Do not check error here because type errors can happen
+		// with only a single file being checked w/o dependencies.
+		// We only want the scope names for the shadow check.
 		log.Fatal(err)
 	}
 
