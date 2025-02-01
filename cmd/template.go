@@ -23,7 +23,7 @@ Arguments:
 
 What is this template/schema as code for?
 
-The template is a go source file that contains human readable struct definitions for every collection in the PB schema. The file is not for compilation. If you need it in your go project, place it in a separate package. The template is there so it can be edited before using the generate command. This gives control over the naming of the generated proxies.`,
+The template is a go source file that contains human readable struct definitions for every collection in the PB schema. The file is not for compilation but you should place it inside your go project in a separate package that is never imported. The template is there so it can be edited before using the generate command. This gives control over the naming of the generated proxies. You can also add methods to the template structs and they will be transferred into the generated code. All field assignments and accesses will be replaced by the proxy getters and setters.`,
 	Run: runTemplate,
 }
 

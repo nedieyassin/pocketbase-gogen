@@ -17,7 +17,11 @@ var rootCmd = &cobra.Command{
 	Long: `Creates type safe proxies for PocketBase
 	
 This tool is for go developers who use PocketBase as their backend framework and would like type safe access to their data.
-It takes in a PocketBase schema and generates a proxy struct for each collection with getters and setters for all fields.`,
+It takes in a PocketBase schema and generates a proxy struct for each collection with getters and setters for all fields.
+
+Run this command from inside your PocketBase project so it has access to the same packages as the rest of your source code, most importantly the PocketBase package itself.
+
+Start by invoking the template command, inspect your template and continue from there with the generate command.`,
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
