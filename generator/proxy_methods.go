@@ -387,6 +387,12 @@ func (p *methodProxifier) selectsProxyField(selector *ast.SelectorExpr) bool {
 		return false
 	}
 
+	if selector.Sel.Name == "Id" {
+		// Id is the only public field of core.Record
+		// and thus not a proxy field
+		return false
+	}
+
 	return true
 }
 

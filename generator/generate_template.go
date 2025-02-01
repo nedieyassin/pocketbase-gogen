@@ -85,7 +85,16 @@ func (t *SchemaTranslator) translateFields(collection *core.Collection) *ast.Fie
 }
 
 func (t *SchemaTranslator) translateField(field core.Field) *ast.Field {
-	ident := toIdentifier(field.GetName())
+	fieldName := field.GetName()
+
+	if fieldName == "id" {
+		// Since the id is the only public field
+		// of the core.Record struct it will
+		// be accessed by the proxy in this way too
+		fieldName = "Id"
+	}
+
+	ident := toIdentifier(fieldName)
 	f := &ast.Field{
 		Doc: createFieldDoc(field),
 		Names: []*ast.Ident{
