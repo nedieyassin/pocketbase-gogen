@@ -126,14 +126,14 @@ func newGetterDecl(field *Field) *ast.FuncDecl {
 	return newPrimitiveGetterDecl(field, getterName)
 }
 
-func newPrimitiveGetterDecl(field *Field, getterName string) *ast.FuncDecl {
+func newPrimitiveGetterDecl(field *Field, recordGetterName string) *ast.FuncDecl {
 	decl := astcopy.FuncDecl(getterTemplate)
 
 	adaptFuncTemplate(
 		decl,
 		field.structName,
-		strcase.ToCamel(field.fieldName),
-		getterName,
+		getterName(field.fieldName),
+		recordGetterName,
 		field.fieldName,
 		field.schemaName,
 		field.fieldType,
@@ -171,7 +171,7 @@ func newRelGetterDecl(field *Field) *ast.FuncDecl {
 	adaptFuncTemplate(
 		decl,
 		field.structName,
-		strcase.ToCamel(fieldName),
+		getterName(fieldName),
 		"",
 		fieldName,
 		field.schemaName,
@@ -192,7 +192,7 @@ func newSelectGetterDecl(field *Field) *ast.FuncDecl {
 	adaptFuncTemplate(
 		decl,
 		field.structName,
-		strcase.ToCamel(field.fieldName),
+		getterName(field.fieldName),
 		"",
 		field.fieldName,
 		field.schemaName,
@@ -229,7 +229,7 @@ func newSetterDecl(field *Field) *ast.FuncDecl {
 	adaptFuncTemplate(
 		decl,
 		field.structName,
-		fmt.Sprintf("Set%v", strcase.ToCamel(fieldName)),
+		setterName(fieldName),
 		"",
 		fieldName,
 		field.schemaName,
@@ -262,7 +262,7 @@ func newRelSetterDecl(field *Field) *ast.FuncDecl {
 	adaptFuncTemplate(
 		decl,
 		field.structName,
-		fmt.Sprintf("Set%v", strcase.ToCamel(fieldName)),
+		setterName(fieldName),
 		"",
 		fieldName,
 		field.schemaName,

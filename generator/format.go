@@ -10,6 +10,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/iancoleman/strcase"
 	"golang.org/x/tools/imports"
 )
 
@@ -70,4 +71,18 @@ func validatePackageName(packageName string) bool {
 	_, err := parser.ParseFile(token.NewFileSet(), "x.go", packageDecl, parser.SkipObjectResolution)
 
 	return err == nil
+}
+
+func getterName(varName string) string {
+	getterName := strcase.ToCamel(varName)
+	if getterName == "Id" {
+		// Have to use GetId to not shadow the identically named core.Record.Id field
+		getterName = "Get" + getterName
+	}
+	return getterName
+}
+
+func setterName(varName string) string {
+	setterName := "Set" + strcase.ToCamel(varName)
+	return setterName
 }
