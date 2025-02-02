@@ -502,6 +502,35 @@ func TestMultiSelectAssign(t *testing.T) {
 	}
 }
 
+func TestTypeCheckerError(t *testing.T) {
+	template := `func (s *StructName) Method() {
+	s.intField = "hello"
+}
+`
+
+	template = addMethodBoilerplate(template)
+
+	_, err := Generate([]byte(template), ".", "test")
+	if err == nil {
+		t.Fatal("the type checker error did not cause the generation to error")
+	}
+}
+
+func TestNameShadowing(t *testing.T) {
+	// Shadow the core.Record.Set Method with a proxy method of the same name
+	template := `func (s *StructName) Set() {
+	_ = "Shadow!"
+}
+`
+
+	template = addMethodBoilerplate(template)
+
+	_, err := Generate([]byte(template), ".", "test")
+	if err == nil {
+		t.Fatal("the shadowed core.Record method did not cause the generation to error")
+	}
+}
+
 var testTemplateStructs = `type StructName struct {
 	// system: id
 	Id string
@@ -535,35 +564,6 @@ func (o *OtherStruct) OtherMethod() *OtherStruct {
 	return o
 }
 `
-
-func TestTypeCheckerError(t *testing.T) {
-	template := `func (s *StructName) Method() {
-	s.intField = "hello"
-}
-`
-
-	template = addMethodBoilerplate(template)
-
-	_, err := Generate([]byte(template), ".", "test")
-	if err == nil {
-		t.Fatal("the type checker error did not cause the generation to error")
-	}
-}
-
-func TestNameShadowing(t *testing.T) {
-	// Shadow the core.Record.Set Method with a proxy method of the same name
-	template := `func (s *StructName) Set() {
-	_ = "Shadow!"
-}
-`
-
-	template = addMethodBoilerplate(template)
-
-	_, err := Generate([]byte(template), ".", "test")
-	if err == nil {
-		t.Fatal("the shadowed core.Record method did not cause the generation to error")
-	}
-}
 
 func expectGeneratedMethod(templateMethod, expectedMethod string, imports ...string) (bool, error) {
 	input := addMethodBoilerplate(templateMethod, imports...)
