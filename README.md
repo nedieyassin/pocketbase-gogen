@@ -253,7 +253,7 @@ func (a *BankAccount) Withdraw(amount int) {
 }
 ```
 
-As you can see, the generator replaced all template field accessot with the appropriate getters and setters so you use the method for editing your data.
+As you can see, the generator replaced all template field accessors with the appropriate getters and setters so you use the method for editing your data.
 
 A few more examples:
 
@@ -357,8 +357,6 @@ func (p *Person) SwitchMyLifeUp() {
 </td>
 </tr>
 </table>
-
-As you can see you can manipulate the data through the template fields.
 
 ## Details
 
