@@ -537,8 +537,6 @@ func (o *OtherStruct) OtherMethod() *OtherStruct {
 `
 
 func TestTypeCheckerError(t *testing.T) {
-	// multi assignment in init statement of else if
-	// is impossible to convert to getter/setter syntax
 	template := `func (s *StructName) Method() {
 	s.intField = "hello"
 }
@@ -549,6 +547,21 @@ func TestTypeCheckerError(t *testing.T) {
 	_, err := Generate([]byte(template), ".", "test")
 	if err == nil {
 		t.Fatal("the type checker error did not cause the generation to error")
+	}
+}
+
+func TestNameShadowing(t *testing.T) {
+	// Shadow the core.Record.Set Method with a proxy method of the same name
+	template := `func (s *StructName) Set() {
+	_ = "Shadow!"
+}
+`
+
+	template = addMethodBoilerplate(template)
+
+	_, err := Generate([]byte(template), ".", "test")
+	if err == nil {
+		t.Fatal("the shadowed core.Record method did not cause the generation to error")
 	}
 }
 
