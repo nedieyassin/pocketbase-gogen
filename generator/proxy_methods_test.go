@@ -536,6 +536,22 @@ func (o *OtherStruct) OtherMethod() *OtherStruct {
 }
 `
 
+func TestTypeCheckerError(t *testing.T) {
+	// multi assignment in init statement of else if
+	// is impossible to convert to getter/setter syntax
+	template := `func (s *StructName) Method() {
+	s.intField = "hello"
+}
+`
+
+	template = addMethodBoilerplate(template)
+
+	_, err := Generate([]byte(template), ".", "test")
+	if err == nil {
+		t.Fatal("the type checker error did not cause the generation to error")
+	}
+}
+
 func expectGeneratedMethod(templateMethod, expectedMethod string, imports ...string) (bool, error) {
 	input := addMethodBoilerplate(templateMethod, imports...)
 
