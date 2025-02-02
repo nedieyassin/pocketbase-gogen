@@ -154,6 +154,9 @@ func extractNames(namedStructType *types.Named) (map[string]any, []*types.Named)
 		selection := methodSet.At(i)
 		funcType := selection.Obj().(*types.Func)
 		recv := funcType.Signature().Recv()
+		if recv == nil {
+			continue
+		}
 		pointerRecv, ok := recv.Type().(*types.Pointer)
 		if !ok {
 			continue

@@ -193,6 +193,7 @@ func (p *methodProxifier) applyAssignMove() {
 	if len(moved.Lhs) == len(assign.Lhs) {
 		p.assignCursor.Replace(&ast.EmptyStmt{Implicit: false})
 	} else {
+		p.addedVars = false
 		assign.Lhs = slices.DeleteFunc(
 			assign.Lhs,
 			func(e ast.Expr) bool { return slices.Contains(moved.Lhs, e) },
@@ -436,7 +437,7 @@ func (p *methodProxifier) findUnusedIdent(ident string) string {
 func (p *methodProxifier) findSetterBlock(assignParent ast.Node, assign ast.Stmt) (*ast.BlockStmt, int, bool) {
 	switch n := assignParent.(type) {
 	case *ast.BlockStmt:
-		return n, slices.Index(n.List, assign), false
+		return n, slices.Index(n.List, assign) + 1, false
 
 	case *ast.ForStmt:
 		if assign == n.Init {
@@ -475,21 +476,35 @@ func (p *methodProxifier) parentSetterBlock(parent ast.Stmt) (*ast.BlockStmt, in
 }
 
 func (p *methodProxifier) findContainingBlock(node ast.Node) *ast.BlockStmt {
-	var containingBlock *ast.BlockStmt
+	finder := &containerFinder{node: node}
+	astutil.Apply(p.method, finder.traverse, nil)
 
-	finder := func(n ast.Node) bool {
-		if node == n {
-			return false
-		}
-		block, ok := n.(*ast.BlockStmt)
-		if ok {
-			containingBlock = block
-		}
+	return finder.containingBlock
+}
+
+type containerFinder struct {
+	containingBlock, currentBlock *ast.BlockStmt
+	node                          ast.Node
+}
+
+func (f *containerFinder) traverse(c *astutil.Cursor) bool {
+	if c.Name() == "Node" {
+		// skip root
 		return true
 	}
-	ast.Inspect(p.method.Body, finder)
-
-	return containingBlock
+	if f.node == c.Node() {
+		f.containingBlock = f.currentBlock
+		return false
+	}
+	block, ok := c.Node().(*ast.BlockStmt)
+	if ok {
+		prevBlock := f.currentBlock
+		f.currentBlock = block
+		astutil.Apply(block, f.traverse, nil)
+		f.currentBlock = prevBlock
+		return false
+	}
+	return true
 }
 
 // Replaces reassignment operators with the written out version
