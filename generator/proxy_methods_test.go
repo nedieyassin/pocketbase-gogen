@@ -458,6 +458,50 @@ func TestPartialInitAssignment(t *testing.T) {
 	}
 }
 
+func TestSingleSelectAssign(t *testing.T) {
+	template := `func (s *StructName) Method() {
+	var i int = 1
+	s.other.selectField = i
+}
+`
+
+	expectedGeneration := `func (s *StructName) Method() {
+	var i int = 1
+	s.Other().SetSelectField(Enum(i))
+}
+`
+
+	equal, err := expectGeneratedMethod(template, expectedGeneration)
+	if err != nil {
+		t.Fatalf("Error during generation: %v", err)
+	}
+	if !equal {
+		t.Fatal("the single select type field did not have the expected generation result")
+	}
+}
+
+func TestMultiSelectAssign(t *testing.T) {
+	template := `func (s *StructName) Method() {
+	i := []int{1, 0}
+	s.other.multiSelectField = i
+}
+`
+
+	expectedGeneration := `func (s *StructName) Method() {
+	i := []int{1, 0}
+	s.Other().SetMultiSelectField(*(*[]SelectType)(unsafe.Pointer(&i)))
+}
+`
+
+	equal, err := expectGeneratedMethod(template, expectedGeneration)
+	if err != nil {
+		t.Fatalf("Error during generation: %v", err)
+	}
+	if !equal {
+		t.Fatal("the multi select type field assign did not have the expected generation result")
+	}
+}
+
 var testTemplateStructs = `type StructName struct {
 	// system: id
 	Id string
@@ -481,8 +525,10 @@ var testTemplateStructs = `type StructName struct {
 type OtherStruct struct {
 	intField int
 	// select: SelectType(opt1, opt2, opt3)
-	selectField []int
-	other *StructName
+	multiSelectField []int
+	// select: Enum(optA, optB)
+	selectField int
+	other		*StructName
 }
 
 func (o *OtherStruct) OtherMethod() *OtherStruct {
