@@ -266,6 +266,33 @@ A few more examples:
 <td>
 
 ```go
+func (a *BankAccount) Deposit(amount int) {
+	a.money += amount
+}
+```
+
+</td>
+<td>
+
+```go
+func (a *BankAccount) Deposit(amount int) {
+	a.SetMoney(a.Money() + amount)
+}
+```
+
+</td>
+</tr>
+</table>
+
+<table align="center" width="100%">
+<tr>
+<th> Template</th>
+<th> Generated</code></th>
+</tr>
+<tr>
+<td>
+
+```go
 // Doctor approved logic
 func (p *Person) UpdateHealth() {
 	if len(p.children) <= 2 {
