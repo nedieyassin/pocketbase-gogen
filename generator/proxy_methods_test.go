@@ -502,6 +502,78 @@ func TestMultiSelectAssign(t *testing.T) {
 	}
 }
 
+func TestNestedContainers(t *testing.T) {
+	template := `func (s *StructName) Method() {
+	switch s.email {
+	case "":
+		fallthrough
+	case "b":
+		for s.intField, s.intField2 = 15, 16; true; s.intField, s.stringField = 9, "" {
+			_ = "Hello World!"
+		}
+	case "c":
+		return
+	}
+	a := make(chan int)
+	b := make(chan int)
+	select {
+	case <-a:
+	case a <- s.intField:
+		for s.intField, s.intField2 = 15, 16; true; s.intField, s.stringField = 9, "" {
+			_ = "Hi there!"
+		}
+	case <-b:
+		return
+	}
+}
+`
+
+	expectedGeneration := `func (s *StructName) Method() {
+	switch s.Email() {
+	case "":
+		fallthrough
+	case "b":
+		intField, intField2 := 15, 16
+		s.SetIntField(intField)
+		s.SetIntField2(intField2)
+		for true {
+			_ = "Hello World!"
+			intField3, stringField := 9, ""
+			s.SetIntField(intField3)
+			s.SetStringField(stringField)
+		}
+	case "c":
+		return
+	}
+	a := make(chan int)
+	b := make(chan int)
+	select {
+	case <-a:
+	case a <- s.IntField():
+		intField4, intField22 := 15, 16
+		s.SetIntField(intField4)
+		s.SetIntField2(intField22)
+		for true {
+			_ = "Hi there!"
+			intField5, stringField2 := 9, ""
+			s.SetIntField(intField5)
+			s.SetStringField(stringField2)
+		}
+	case <-b:
+		return
+	}
+}
+`
+
+	equal, err := expectGeneratedMethod(template, expectedGeneration)
+	if err != nil {
+		t.Fatalf("Error during generation: %v", err)
+	}
+	if !equal {
+		t.Fatal("the nested block-statements in case clauses did not have the expected generation result")
+	}
+}
+
 func TestTypeCheckerError(t *testing.T) {
 	template := `func (s *StructName) Method() {
 	s.intField = "hello"

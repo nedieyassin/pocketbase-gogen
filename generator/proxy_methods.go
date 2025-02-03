@@ -149,21 +149,21 @@ func (p *methodProxifier) up(c *astutil.Cursor) bool {
 }
 
 type assignMove struct {
-	assign      *ast.AssignStmt
-	targetBock  *ast.BlockStmt
-	targetIndex int
-	toMove      []ast.Expr
+	assign          *ast.AssignStmt
+	targetContainer ast.Node
+	targetIndex     int
+	toMove          []ast.Expr
 }
 
-func (p *methodProxifier) initAssignMove(targetBlock *ast.BlockStmt, targetIndex int) {
+func (p *methodProxifier) initAssignMove(targetContainer ast.Node, targetIndex int) {
 	if p.assignMove != nil {
 		return
 	}
 	p.assignMove = &assignMove{
-		assign:      p.assignCursor.Node().(*ast.AssignStmt),
-		targetBock:  targetBlock,
-		targetIndex: targetIndex,
-		toMove:      make([]ast.Expr, 0),
+		assign:          p.assignCursor.Node().(*ast.AssignStmt),
+		targetContainer: targetContainer,
+		targetIndex:     targetIndex,
+		toMove:          make([]ast.Expr, 0),
 	}
 }
 
@@ -205,9 +205,11 @@ func (p *methodProxifier) applyAssignMove() {
 		)
 	}
 
-	block := p.assignMove.targetBock
+	block := p.assignMove.targetContainer
 	index := p.assignMove.targetIndex
-	block.List = slices.Insert(block.List, index, ast.Stmt(moved))
+	list := containerBody(block)
+	list = slices.Insert(list, index, ast.Stmt(moved))
+	setContainerBody(block, list)
 }
 
 func (p *methodProxifier) proxifySelector(
@@ -231,7 +233,7 @@ func (p *methodProxifier) proxifySelector(
 			return
 		}
 
-		block, insertIndex, lift := p.findSetterBlock(p.assignCursor.Parent(), assign)
+		block, insertIndex, lift := p.findSetterContainer(p.assignCursor.Parent(), assign)
 		if block == nil || insertIndex < 0 {
 			pos := p.parser.Fset.Position(assign.TokPos)
 			errMsg := fmt.Sprintf("%v: An error ocurred while trying to convert the assign statement to a proxy setter call. Try using a different syntax.", pos)
@@ -239,7 +241,9 @@ func (p *methodProxifier) proxifySelector(
 			return
 		}
 
-		block.List = slices.Insert(block.List, insertIndex, setterCall)
+		list := containerBody(block)
+		list = slices.Insert(list, insertIndex, setterCall)
+		setContainerBody(block, list)
 		if lift {
 			p.initAssignMove(block, insertIndex)
 			p.assignMove.toMove = append(p.assignMove.toMove, replacement.(ast.Expr))
@@ -482,14 +486,14 @@ func (p *methodProxifier) findUnusedIdent(ident string) string {
 // Returns the block, the insertion index and a boolean for whether
 // the assign has to move out of its parent because setter syntax does
 // not work inside init and post statements of if/for statements.
-func (p *methodProxifier) findSetterBlock(assignParent ast.Node, assign ast.Stmt) (*ast.BlockStmt, int, bool) {
+func (p *methodProxifier) findSetterContainer(assignParent ast.Node, assign ast.Stmt) (ast.Node, int, bool) {
 	switch n := assignParent.(type) {
 	case *ast.BlockStmt:
 		return n, slices.Index(n.List, assign) + 1, false
 
 	case *ast.ForStmt:
 		if assign == n.Init {
-			parentContaining, i := p.parentSetterBlock(n)
+			parentContaining, i := p.indexInParentContainer(n)
 			return parentContaining, i, true
 		} else if assign == n.Post {
 			return n.Body, len(n.Body.List), true
@@ -497,19 +501,19 @@ func (p *methodProxifier) findSetterBlock(assignParent ast.Node, assign ast.Stmt
 
 	case *ast.IfStmt:
 		if assign == n.Init {
-			parentContaining, i := p.parentSetterBlock(n)
+			parentContaining, i := p.indexInParentContainer(n)
 			return parentContaining, i, true
 		}
 
 	case *ast.SwitchStmt:
 		if assign == n.Init {
-			parentContaining, i := p.parentSetterBlock(n)
+			parentContaining, i := p.indexInParentContainer(n)
 			return parentContaining, i, true
 		}
 
 	case *ast.TypeSwitchStmt:
 		if assign == n.Init {
-			parentContaining, i := p.parentSetterBlock(n)
+			parentContaining, i := p.indexInParentContainer(n)
 			return parentContaining, i, true
 		}
 
@@ -517,22 +521,23 @@ func (p *methodProxifier) findSetterBlock(assignParent ast.Node, assign ast.Stmt
 	return nil, -1, false
 }
 
-func (p *methodProxifier) parentSetterBlock(parent ast.Stmt) (*ast.BlockStmt, int) {
-	containingBlock := p.findContainingBlock(parent)
-	index := slices.Index(containingBlock.List, parent)
-	return containingBlock, index
+func (p *methodProxifier) indexInParentContainer(parent ast.Stmt) (ast.Node, int) {
+	container := p.findContainer(parent)
+	list := containerBody(container)
+	index := slices.Index(list, parent)
+	return container, index
 }
 
-func (p *methodProxifier) findContainingBlock(node ast.Node) *ast.BlockStmt {
+func (p *methodProxifier) findContainer(node ast.Node) ast.Node {
 	finder := &containerFinder{node: node}
 	astutil.Apply(p.method, finder.traverse, nil)
 
-	return finder.containingBlock
+	return finder.container
 }
 
 type containerFinder struct {
-	containingBlock, currentBlock *ast.BlockStmt
-	node                          ast.Node
+	container, currentContainer ast.Node
+	node                        ast.Node
 }
 
 func (f *containerFinder) traverse(c *astutil.Cursor) bool {
@@ -540,19 +545,58 @@ func (f *containerFinder) traverse(c *astutil.Cursor) bool {
 		// skip root
 		return true
 	}
-	if f.node == c.Node() {
-		f.containingBlock = f.currentBlock
+	n := c.Node()
+	if f.node == n {
+		f.container = f.currentContainer
 		return false
 	}
-	block, ok := c.Node().(*ast.BlockStmt)
-	if ok {
-		prevBlock := f.currentBlock
-		f.currentBlock = block
-		astutil.Apply(block, f.traverse, nil)
-		f.currentBlock = prevBlock
+	if isContainer(n) {
+		prevContainer := f.currentContainer
+		f.currentContainer = n
+		astutil.Apply(n, f.traverse, nil)
+		f.currentContainer = prevContainer
 		return false
 	}
 	return true
+}
+
+func isContainer(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BlockStmt:
+		return true
+	case *ast.CaseClause:
+		return true
+	case *ast.CommClause:
+		return true
+	default:
+		return false
+	}
+}
+
+func containerBody(node ast.Node) []ast.Stmt {
+	switch n := node.(type) {
+	case *ast.BlockStmt:
+		return n.List
+	case *ast.CaseClause:
+		return n.Body
+	case *ast.CommClause:
+		return n.Body
+	default:
+		panic("Is not a container node")
+	}
+}
+
+func setContainerBody(node ast.Node, list []ast.Stmt) {
+	switch n := node.(type) {
+	case *ast.BlockStmt:
+		n.List = list
+	case *ast.CaseClause:
+		n.Body = list
+	case *ast.CommClause:
+		n.Body = list
+	default:
+		panic("Is not a container node")
+	}
 }
 
 // Replaces reassignment operators with the written out version
