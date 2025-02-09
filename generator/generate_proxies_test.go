@@ -161,6 +161,7 @@ func (p *Parent) Child() *Child {
 }
 
 func (p *Parent) SetChild(child *Child) {
+	p.Record.Set("child", child.Id)
 	e := p.Expand()
 	e["child"] = child.Record
 	p.SetExpand(e)
@@ -205,9 +206,12 @@ func (p *Parent) Children() []*Child {
 
 func (p *Parent) SetChildren(children []*Child) {
 	records := make([]*core.Record, len(children))
+	ids := make([]string, len(children))
 	for i, r := range children {
 		records[i] = r.Record
+		ids[i] = r.Record.Id
 	}
+	p.Record.Set("children", ids)
 	e := p.Expand()
 	e["children"] = records
 	p.SetExpand(e)

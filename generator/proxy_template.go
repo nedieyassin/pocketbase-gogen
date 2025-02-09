@@ -74,6 +74,7 @@ func (p *StructName) FuncName(fieldName FieldType) {
 
 // 7: Single relation setter declaration
 func (p *StructName) FuncName(fieldName *FieldType) {
+	p.Record.Set("key", fieldName.Id) 
 	e := p.Expand()
 	e["key"] = fieldName.Record
 	p.SetExpand(e)
@@ -82,9 +83,12 @@ func (p *StructName) FuncName(fieldName *FieldType) {
 // 8: Multi relation setter declaration
 func (p *StructName) FuncName(fieldName []*FieldType) {
 	records := make([]*core.Record, len(fieldName))
+	ids := make([]string, len(fieldName))
 	for i, r := range fieldName {
 		records[i] = r.Record
+		ids[i] = r.Record.Id
 	}
+	p.Record.Set("key", ids)
 	e := p.Expand()
 	e["key"] = records
 	p.SetExpand(e)
