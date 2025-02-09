@@ -115,4 +115,9 @@ func (p *StructName) FuncName(fieldName []FieldType) {
 	}
 	p.Set("key", is)
 }
+
+// 11: Collection name getter
+func (p *StructName) FuncName() string {
+	return "key"
+}
 `

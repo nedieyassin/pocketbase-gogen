@@ -748,6 +748,39 @@ func (p *Name) SetSelect2(select2 SelectTypeName1) {
 	}
 }
 
+func TestCollectionNameGetter(t *testing.T) {
+	template := `type Name struct {
+	// collection-name: collection_name
+	firstField string
+}
+`
+
+	expectedGeneration := `type Name struct {
+	core.BaseRecordProxy
+}
+
+func (p *Name) CollectionName() string {
+	return "collection_name"
+}
+
+func (p *Name) FirstField() string {
+	return p.GetString("firstField")
+}
+
+func (p *Name) SetFirstField(firstField string) {
+	p.Set("firstField", firstField)
+}
+`
+
+	equal, err := expectGenerated(template, expectedGeneration)
+	if err != nil {
+		t.Fatalf("Error during generation: %v", err)
+	}
+	if !equal {
+		t.Fatal("the collection name comment did not have the expected generation result")
+	}
+}
+
 func expectGenerated(input, expectedOuput string, imports ...string) (bool, error) {
 	input = addBoilerplate(input, imports...)
 

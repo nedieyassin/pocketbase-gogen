@@ -27,6 +27,8 @@ var (
 	selectSetterTemplate,
 	multiSelectSetterTemplate *ast.FuncDecl
 
+	collectionNameGetter *ast.FuncDecl
+
 	primitiveGetters map[string]string
 )
 
@@ -103,6 +105,8 @@ func loadTemplateASTs() error {
 	multiRelationSetterTemplate = f.Decls[8].(*ast.FuncDecl)
 	selectSetterTemplate = f.Decls[9].(*ast.FuncDecl)
 	multiSelectSetterTemplate = f.Decls[10].(*ast.FuncDecl)
+
+	collectionNameGetter = f.Decls[11].(*ast.FuncDecl)
 
 	return nil
 }
@@ -225,6 +229,25 @@ func newSelectGetterDecl(field *Field) (*ast.FuncDecl, error) {
 		field.fieldName,
 		field.schemaName,
 		&ast.Ident{Name: field.selectTypeName},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return decl, nil
+}
+
+func newCollectionNameGetter(getterName, structName, collectionName string) (*ast.FuncDecl, error) {
+	decl := astcopy.FuncDecl(collectionNameGetter)
+
+	err := adaptFuncTemplate(
+		decl,
+		structName,
+		getterName,
+		"",
+		"",
+		collectionName,
+		nil,
 	)
 	if err != nil {
 		return nil, err

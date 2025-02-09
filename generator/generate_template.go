@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"strings"
 
 	"github.com/iancoleman/strcase"
@@ -91,6 +92,10 @@ func (t *SchemaTranslator) translateFields(collection *core.Collection) (*ast.Fi
 		translated, err := t.translateField(f)
 		if err != nil {
 			return nil, err
+		}
+		if i == 0 {
+			c := createCollectionNameComment(collection.Name)
+			translated.Doc.List = slices.Insert(translated.Doc.List, 0, c)
 		}
 		fields[i] = translated
 	}
@@ -232,6 +237,13 @@ func createSystemFieldComment(field core.Field) *ast.Comment {
 	return comment
 }
 
+func createCollectionNameComment(collectionName string) *ast.Comment {
+	comment := &ast.Comment{
+		Text: collectionNameComment + " " + collectionName,
+	}
+	return comment
+}
+
 func wrapTemplateDeclarations(decls []ast.Decl, packageName string) *ast.File {
 	f := &ast.File{
 		Doc:   newInfoComment(),
@@ -271,6 +283,8 @@ func newInfoComment() *ast.CommentGroup {
 			{Text: "// Do not:"},
 			{Text: "//  - Add structs that do not represent a PB collection."},
 			{Text: "//  - Add fields that are not part of the PB schema to the structs."},
+			{Text: "//  - Change the '// collection-name:' comments unless the collection was actually renamed."},
+			{Text: "//    If the comment is missing from the first struct field, the generator will print a warning."},
 			{Text: "//  - Change the select values in the () of the '// select:' comments'"},
 			{Text: "//  - Remove the '// system:' doc comments from the system fields. Generation will fail if you do so."},
 			{Text: "//  - Shadow any names from the core.Record struct. Generation will also fail for safety."},

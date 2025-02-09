@@ -142,6 +142,11 @@ func proxiesFromGoTemplate(sourceCode []byte) ([]ast.Decl, error) {
 		methods := proxyMethods[structName]
 		decls = append(decls, methods...)
 
+		nameGetter := p.createCollectionNameGetter(structName)
+		if nameGetter != nil {
+			decls = append(decls, nameGetter)
+		}
+
 		getters, err := createFuncs(fields, newGetterDecl)
 		if err != nil {
 			return nil, err
@@ -167,14 +172,18 @@ type Parser struct {
 	Fset *token.FileSet
 	fAst *ast.File
 
-	structSpecs   []*ast.TypeSpec
-	structNames   map[string]*ast.TypeSpec
-	structFields  map[string][]*Field
-	structMethods map[string][]*ast.FuncDecl
+	structSpecs     []*ast.TypeSpec
+	structNames     map[string]*ast.TypeSpec
+	structFields    map[string][]*Field
+	structMethods   map[string][]*ast.FuncDecl
+	collectionNames map[string]string
+
+	// Tracks new identifier names that the parser finds from
+	// template comments
+	newNames map[string]any
 
 	// Tracks the declarations of select-typing related
 	// names to prevent duplication
-	selectTypeDups       map[string]any
 	selectTypeToOptions  map[string][]string
 	selectTypeToVarNames map[string][]string
 }
@@ -182,7 +191,7 @@ type Parser struct {
 func newParser(sourceCode []byte) (*Parser, error) {
 	parser := &Parser{
 		sourceCode:           sourceCode,
-		selectTypeDups:       map[string]any{},
+		newNames:             map[string]any{},
 		selectTypeToOptions:  map[string][]string{},
 		selectTypeToVarNames: map[string][]string{},
 	}
@@ -191,12 +200,11 @@ func newParser(sourceCode []byte) (*Parser, error) {
 	}
 
 	parser.collectStructSpecs()
-
 	if err := parser.collectStructFields(); err != nil {
 		return nil, err
 	}
-
 	parser.collectStructMethods()
+	parser.findCollectionNames()
 
 	return parser, nil
 }
@@ -278,6 +286,21 @@ func (p *Parser) collectStructMethods() {
 	}
 
 	p.structMethods = funcs
+}
+
+func (p *Parser) findCollectionNames() {
+	p.collectionNames = make(map[string]string)
+
+	for structName, fields := range p.structFields {
+		if len(fields) == 0 {
+			continue
+		}
+		firstField := fields[0].astOriginal
+		cName := p.parseCollectionNameComment(firstField)
+		if cName != "" {
+			p.collectionNames[structName] = cName
+		}
+	}
 }
 
 func (p *Parser) newFieldsFromAST(structName string, field *ast.Field) ([]*Field, error) {
@@ -469,7 +492,7 @@ func (p *Parser) checkBrackets(commentPos token.Pos, parsedComment ast.Node) (bo
 
 func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selectOptions, selectVarNames []string) (string, []string, []string) {
 	origName := typeName
-	_, isDuplicate := p.selectTypeDups[typeName]
+	_, isDuplicate := p.newNames[typeName]
 
 	if isDuplicate {
 		otherOpts := p.selectTypeToOptions[typeName]
@@ -479,7 +502,7 @@ func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selec
 			return typeName, []string{}, []string{}
 		} else {
 			// Another field has a duplicate name but different select options. Rename this one.
-			typeName = rename(typeName, p.selectTypeDups)
+			typeName = rename(typeName, p.newNames)
 
 			pos := p.Fset.Position(commentPos)
 			warnMsg := fmt.Sprintf("Found a duplicate select type name: %v. Renaming to %v", origName, typeName)
@@ -487,7 +510,7 @@ func (p *Parser) validateSelectType(commentPos token.Pos, typeName string, selec
 		}
 	}
 
-	p.selectTypeDups[typeName] = struct{}{}
+	p.newNames[typeName] = struct{}{}
 	p.selectTypeToOptions[typeName] = selectOptions
 	p.selectTypeToVarNames[typeName] = selectVarNames
 
@@ -500,10 +523,10 @@ func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, selectVarNam
 	checkedNames := make([]string, len(selectVarNames))
 
 	for i, name := range selectVarNames {
-		_, isDuplicate := p.selectTypeDups[name]
+		_, isDuplicate := p.newNames[name]
 
 		if isDuplicate {
-			name = rename(name, p.selectTypeDups)
+			name = rename(name, p.newNames)
 
 			pos := p.Fset.Position(commentPos)
 			warnMsg := fmt.Sprintf(
@@ -512,7 +535,7 @@ func (p *Parser) checkSelectVarNameDuplicates(commentPos token.Pos, selectVarNam
 			p.logWarning(warnMsg, pos, nil)
 		}
 
-		p.selectTypeDups[name] = struct{}{}
+		p.newNames[name] = struct{}{}
 
 		checkedNames[i] = name
 	}
@@ -578,6 +601,24 @@ func (p *Parser) parseSystemFieldNameComment(field *ast.Field) (string, error) {
 
 	systemFieldName := strings.TrimSpace(comment[len(systemFieldComment):])
 	return systemFieldName, nil
+}
+
+var collectionNameComment = "// collection-name:"
+
+func (p *Parser) parseCollectionNameComment(field *ast.Field) string {
+	if field.Doc == nil || len(field.Doc.List) == 0 {
+		return ""
+	}
+
+	collectionName := ""
+	for _, c := range field.Doc.List {
+		if len(c.Text) >= len(collectionNameComment) && c.Text[:len(collectionNameComment)] == collectionNameComment {
+			collectionName = strings.TrimSpace(c.Text[len(collectionNameComment):])
+			break
+		}
+	}
+
+	return collectionName
 }
 
 // A trailing underscore signals an identifier that could otherwise
@@ -659,6 +700,22 @@ func createSelectTypes(fields []*Field) []ast.Decl {
 	}
 
 	return decls
+}
+
+func (p *Parser) createCollectionNameGetter(structName string) *ast.FuncDecl {
+	collectionName := p.collectionNames[structName]
+	if collectionName == "" {
+		warnMsg := fmt.Sprintf(
+			"Warning: The `%v` template struct does not have a '// collection-name:' comment on its first field. Skipping generation of the CollectionName() method.",
+			structName,
+		)
+		log.Println(warnMsg)
+		return nil
+	}
+
+	getterDecl, _ := newCollectionNameGetter("CollectionName", structName, collectionName)
+
+	return getterDecl
 }
 
 // Returns a *ast.TypeSpec if it specifies a struct.

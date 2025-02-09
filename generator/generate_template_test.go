@@ -10,6 +10,7 @@ import (
 )
 
 var expectedAuthCollectionStruct = `type AuthCollection struct {
+	// collection-name: auth_collection
 	// system: id
 	Id string
 	// system: password
@@ -30,6 +31,7 @@ var expectedAuthCollectionStruct = `type AuthCollection struct {
 `
 
 var expectedAllTypesCollectionStruct = `type AllFieldTypes struct {
+	// collection-name: all_field_types
 	// system: id
 	Id             string
 	text           string
@@ -55,6 +57,7 @@ var expectedAllTypesCollectionStruct = `type AllFieldTypes struct {
 `
 
 var expectedReservedGoNameCollectionStruct = `type WithReservedGoNames struct {
+	// collection-name: with_reserved_go_names
 	// system: id
 	Id      string
 	func_   string
