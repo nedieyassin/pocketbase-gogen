@@ -10,7 +10,7 @@ Also supports custom methods that work with the typed data.
 
 ### Step 0: Install `pocketbase-gogen`
 ```console
-go install github.com/snonky/pocketbase-gogen
+go install github.com/snonky/pocketbase-gogen@latest
 ```
 You should now have access to the CLI with the `pocketbase-gogen` command.
 
