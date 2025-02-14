@@ -395,8 +395,8 @@ func TestImpossibleElseIfBranch(t *testing.T) {
 `
 
 	template = addMethodBoilerplate(template)
-
-	_, err := Generate([]byte(template), ".", "test")
+	parser, _ := NewTemplateParser([]byte(template))
+	_, err := Generate(parser, ".", "test")
 	if err == nil {
 		t.Fatal("the impossible else if branch init statement did not cause the generation to error")
 	}
@@ -581,8 +581,8 @@ func TestTypeCheckerError(t *testing.T) {
 `
 
 	template = addMethodBoilerplate(template)
-
-	_, err := Generate([]byte(template), ".", "test")
+	parser, _ := NewTemplateParser([]byte(template))
+	_, err := Generate(parser, ".", "test")
 	if err == nil {
 		t.Fatal("the type checker error did not cause the generation to error")
 	}
@@ -596,8 +596,8 @@ func TestNameShadowing(t *testing.T) {
 `
 
 	template = addMethodBoilerplate(template)
-
-	_, err := Generate([]byte(template), ".", "test")
+	parser, _ := NewTemplateParser([]byte(template))
+	_, err := Generate(parser, ".", "test")
 	if err == nil {
 		t.Fatal("the shadowed core.Record method did not cause the generation to error")
 	}
@@ -640,7 +640,11 @@ func (o *OtherStruct) OtherMethod() *OtherStruct {
 func expectGeneratedMethod(templateMethod, expectedMethod string, imports ...string) (bool, error) {
 	input := addMethodBoilerplate(templateMethod, imports...)
 
-	outBytes, err := Generate([]byte(input), ".", "test")
+	parser, err := NewTemplateParser([]byte(input))
+	if err != nil {
+		return false, err
+	}
+	outBytes, err := Generate(parser, ".", "test")
 	if err != nil {
 		return false, err
 	}

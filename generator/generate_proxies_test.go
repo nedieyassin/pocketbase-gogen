@@ -49,8 +49,14 @@ const (
 	Opt2
 )
 
-var zzEnumSelectNameMap = map[string]Enum{"opt1": 0, "opt2": 1}
-var zzEnumSelectIotaMap = map[Enum]string{0: "opt1", 1: "opt2"}
+var zzEnumSelectNameMap = map[string]Enum{
+	"opt1": 0,
+	"opt2": 1,
+}
+var zzEnumSelectIotaMap = map[Enum]string{
+	0: "opt1",
+	1: "opt2",
+}
 
 type HasSelect struct {
 	core.BaseRecordProxy
@@ -97,8 +103,14 @@ const (
 	Opt2
 )
 
-var zzEnumSelectNameMap = map[string]Enum{"opt1": 0, "opt2": 1}
-var zzEnumSelectIotaMap = map[Enum]string{0: "opt1", 1: "opt2"}
+var zzEnumSelectNameMap = map[string]Enum{
+	"opt1": 0,
+	"opt2": 1,
+}
+var zzEnumSelectIotaMap = map[Enum]string{
+	0: "opt1",
+	1: "opt2",
+}
 
 type HasSelect struct {
 	core.BaseRecordProxy
@@ -560,7 +572,8 @@ func TestUnknownType(t *testing.T) {
 	`
 
 	template = addBoilerplate(template)
-	_, err := Generate([]byte(template), ".", "test")
+	parser, _ := NewTemplateParser([]byte(template))
+	_, err := Generate(parser, ".", "test")
 	if err == nil {
 		t.Fatal("the illegally typed field did not cause the generation to error")
 	}
@@ -575,7 +588,7 @@ func TestIllegalSelectFieldType(t *testing.T) {
 	`
 
 	template = addBoilerplate(template)
-	_, err := Generate([]byte(template), ".", "test")
+	_, err := NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the illegally typed select type field did not cause the generation to error")
 	}
@@ -587,7 +600,8 @@ func TestUncommentedSystemField(t *testing.T) {
 }
 `
 	template = addBoilerplate(template)
-	_, err := Generate([]byte(template), ".", "test")
+	parser, _ := NewTemplateParser([]byte(template))
+	_, err := Generate(parser, ".", "test")
 	if err == nil {
 		t.Fatal("the uncommented system field did not cause the generation to error")
 	}
@@ -600,7 +614,7 @@ func TestMalformedSelectComment(t *testing.T) {
 }
 `
 	template = addBoilerplate(template)
-	_, err := Generate([]byte(template), ".", "test")
+	_, err := NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the malformed select comment did not cause the generation to error")
 	}
@@ -611,7 +625,7 @@ func TestMalformedSelectComment(t *testing.T) {
 }
 `
 	template = addBoilerplate(template)
-	_, err = Generate([]byte(template), ".", "test")
+	_, err = NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the malformed select comment did not cause the generation to error")
 	}
@@ -622,7 +636,7 @@ func TestMalformedSelectComment(t *testing.T) {
 }
 `
 	template = addBoilerplate(template)
-	_, err = Generate([]byte(template), ".", "test")
+	_, err = NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the malformed select comment did not cause the generation to error")
 	}
@@ -635,7 +649,7 @@ func TestIllegalMultiNameFields(t *testing.T) {
 `
 
 	template = addBoilerplate(template)
-	_, err := Generate([]byte(template), ".", "test")
+	_, err := NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the illegal multi name field with an underscore escape did not cause the generation to error")
 	}
@@ -647,7 +661,7 @@ func TestIllegalMultiNameFields(t *testing.T) {
 `
 
 	template = addBoilerplate(template)
-	_, err = Generate([]byte(template), ".", "test")
+	_, err = NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the illegal multi name system field did not cause the generation to error")
 	}
@@ -659,7 +673,7 @@ func TestIllegalMultiNameFields(t *testing.T) {
 `
 
 	template = addBoilerplate(template)
-	_, err = Generate([]byte(template), ".", "test")
+	_, err = NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the illegal multi name select type field did not cause the generation to error")
 	}
@@ -671,7 +685,7 @@ func TestIllegalMultiNameFields(t *testing.T) {
 `
 
 	template = addBoilerplate(template)
-	_, err = Generate([]byte(template), ".", "test")
+	_, err = NewTemplateParser([]byte(template))
 	if err == nil {
 		t.Fatal("the illegal multi name renamed field did not cause the generation to error")
 	}
@@ -781,15 +795,27 @@ func (p *Name) SetFirstField(firstField string) {
 	}
 }
 
-func expectGenerated(input, expectedOuput string, imports ...string) (bool, error) {
+func expectGenerated(input, expectedOutput string, imports ...string) (bool, error) {
 	input = addBoilerplate(input, imports...)
 
-	outBytes, err := Generate([]byte(input), ".", "test")
+	parser, err := NewTemplateParser([]byte(input))
+	if err != nil {
+		return false, err
+	}
+	outBytes, err := Generate(parser, ".", "test")
 	if err != nil {
 		return false, err
 	}
 
-	reader := bytes.NewReader(outBytes)
+	output := removeBoilerplate(outBytes)
+
+	return output == expectedOutput, nil
+}
+
+// Removes everything up until the first line that starts
+// with "type"
+func removeBoilerplate(sourceCode []byte) string {
+	reader := bytes.NewReader(sourceCode)
 	lineReader := bufio.NewReader(reader)
 
 	var sb strings.Builder
@@ -806,7 +832,7 @@ func expectGenerated(input, expectedOuput string, imports ...string) (bool, erro
 	}
 
 	output := sb.String()
-	return output == expectedOuput, nil
+	return output
 }
 
 func addBoilerplate(sourceCode string, imports ...string) string {

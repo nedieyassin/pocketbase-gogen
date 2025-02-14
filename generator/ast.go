@@ -27,10 +27,26 @@ var (
 	selectSetterTemplate,
 	multiSelectSetterTemplate *ast.FuncDecl
 
-	collectionNameGetter *ast.FuncDecl
+	collectionNameGetterTemplate *ast.FuncDecl
+
+	proxyInterfaceTemplate,
+	proxyPInterfaceTemplate *ast.GenDecl
+
+	collectionNameUtilTemplate,
+	newProxyUtilTemplate,
+	wrapRecordUtilTemplate *ast.FuncDecl
+
+	relationFieldStructTemplate,
+	relationMapTemplate *ast.GenDecl
 
 	primitiveGetters map[string]string
 )
+
+func init() {
+	if err := loadTemplateASTs(); err != nil {
+		panic("the template ASTs could not be parsed")
+	}
+}
 
 type RelationType int
 
@@ -87,11 +103,13 @@ func newField(
 
 func loadTemplateASTs() error {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, ".", proxyTemplateCode, parser.SkipObjectResolution)
+	opts := parser.SkipObjectResolution
+	f, err := parser.ParseFile(fset, ".", proxyTemplateCode, opts)
 	if err != nil {
 		return err
 	}
 
+	// Proxy templates
 	structTemplate = f.Decls[0].(*ast.GenDecl)
 
 	getterTemplate = f.Decls[1].(*ast.FuncDecl)
@@ -106,7 +124,22 @@ func loadTemplateASTs() error {
 	selectSetterTemplate = f.Decls[9].(*ast.FuncDecl)
 	multiSelectSetterTemplate = f.Decls[10].(*ast.FuncDecl)
 
-	collectionNameGetter = f.Decls[11].(*ast.FuncDecl)
+	collectionNameGetterTemplate = f.Decls[11].(*ast.FuncDecl)
+
+	opts |= parser.ParseComments
+	f, err = parser.ParseFile(fset, ".", utilTemplateCode, opts)
+	if err != nil {
+		return err
+	}
+
+	// Util templates
+	proxyInterfaceTemplate = f.Decls[0].(*ast.GenDecl)
+	proxyPInterfaceTemplate = f.Decls[1].(*ast.GenDecl)
+	collectionNameUtilTemplate = f.Decls[2].(*ast.FuncDecl)
+	newProxyUtilTemplate = f.Decls[3].(*ast.FuncDecl)
+	wrapRecordUtilTemplate = f.Decls[4].(*ast.FuncDecl)
+	relationFieldStructTemplate = f.Decls[5].(*ast.GenDecl)
+	relationMapTemplate = f.Decls[6].(*ast.GenDecl)
 
 	return nil
 }
@@ -238,7 +271,7 @@ func newSelectGetterDecl(field *Field) (*ast.FuncDecl, error) {
 }
 
 func newCollectionNameGetter(getterName, structName, collectionName string) (*ast.FuncDecl, error) {
-	decl := astcopy.FuncDecl(collectionNameGetter)
+	decl := astcopy.FuncDecl(collectionNameGetterTemplate)
 
 	err := adaptFuncTemplate(
 		decl,
@@ -506,9 +539,122 @@ func selectIotaMapName(typeName string) string {
 	return fmt.Sprintf("zz%vSelectIotaMap", typeName)
 }
 
+func newProxyTypeConstraint(structNames []string) *ast.GenDecl {
+	interfaceDecl := astcopy.GenDecl(proxyInterfaceTemplate)
+	if len(structNames) == 0 {
+		return interfaceDecl
+	}
+
+	var constraint ast.Expr
+
+	for i, structName := range structNames {
+		if i == 0 {
+			constraint = ast.NewIdent(structName)
+			continue
+		}
+
+		constraint = &ast.BinaryExpr{
+			X:  constraint,
+			Y:  ast.NewIdent(structName),
+			Op: token.OR,
+		}
+	}
+
+	interfaceSpec := interfaceDecl.Specs[0].(*ast.TypeSpec)
+	interfaceType := interfaceSpec.Type.(*ast.InterfaceType)
+	interfaceType.Methods.List = []*ast.Field{{Type: constraint}}
+
+	return interfaceDecl
+}
+
+func newRelationMapDecl(collectionNames []string, relationMap map[string]map[string][]relationField) ast.Decl {
+	mapEntries := make([]ast.Expr, 0, len(relationMap))
+
+	// Do not iterate map directly to gain reproducible order
+	for _, collectionName := range collectionNames {
+		relations, ok := relationMap[collectionName]
+		if !ok {
+			continue
+		}
+
+		key := &ast.BasicLit{
+			Kind:  token.STRING,
+			Value: "\"" + collectionName + "\"",
+		}
+		value := newCollectionRelationMapLit(collectionNames, relations)
+		entry := &ast.KeyValueExpr{Key: key, Value: value}
+		mapEntries = append(mapEntries, entry)
+	}
+
+	mapDecl := astcopy.GenDecl(relationMapTemplate)
+	mapSpec := mapDecl.Specs[0].(*ast.ValueSpec)
+	mapLit := mapSpec.Values[0].(*ast.CompositeLit)
+	mapLit.Elts = mapEntries
+
+	return mapDecl
+}
+
+func newCollectionRelationMapLit(collectionNames []string, relationMap map[string][]relationField) *ast.CompositeLit {
+	mapEntries := make([]ast.Expr, 0, len(relationMap))
+	for _, collectionName := range collectionNames {
+		relationFields, ok := relationMap[collectionName]
+		if !ok {
+			continue
+		}
+
+		key := &ast.BasicLit{
+			Kind:  token.STRING,
+			Value: "\"" + collectionName + "\"",
+		}
+		value := &ast.CompositeLit{Elts: relationFieldLits(relationFields)}
+		entry := &ast.KeyValueExpr{Key: key, Value: value}
+		mapEntries = append(mapEntries, entry)
+	}
+	lit := &ast.CompositeLit{Elts: mapEntries}
+	return lit
+}
+
+func relationFieldLits(relationFields []relationField) []ast.Expr {
+	lits := make([]ast.Expr, len(relationFields))
+
+	for i, f := range relationFields {
+		fieldNameLit := &ast.BasicLit{
+			Kind:  token.STRING,
+			Value: "\"" + f.fieldName + "\"",
+		}
+
+		var isMultiStr string
+		if f.isMulti {
+			isMultiStr = "true"
+		} else {
+			isMultiStr = "false"
+		}
+		isMultiIdent := ast.NewIdent(isMultiStr)
+
+		lits[i] = &ast.CompositeLit{Elts: []ast.Expr{fieldNameLit, isMultiIdent}}
+	}
+
+	return lits
+}
+
+func wrapGeneratedDeclarations(decls []ast.Decl, packageName string) *ast.File {
+	infoComment := &ast.CommentGroup{
+		List: []*ast.Comment{
+			{Text: "// Autogenerated by github.com/snonky/pocketbase-gogen. Do not edit."},
+		},
+	}
+
+	f := &ast.File{
+		Doc:   infoComment,
+		Name:  ast.NewIdent(packageName),
+		Decls: decls,
+	}
+	return f
+}
+
 // Returns the base type of a type expression
 // Examples: *int -> int, []string -> string, []*MyStruct -> MyStruct
-func baseType(t ast.Expr) ast.Expr {
+func baseType(t ast.Expr) *ast.Ident {
 	var base *ast.Ident
 	ast.Inspect(t, func(n ast.Node) bool {
 		ident, ok := n.(*ast.Ident)

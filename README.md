@@ -30,9 +30,12 @@ pocketbase-gogen generate ./yourmodule/pbschema/template.go ./yourmodule/generat
 You will now have `proxies.go` which contains the actual proxy structs
 that you can drop in to use instead of raw `core.Record` structs from PocketBase ([PB doc on proxy usage](https://pocketbase.io/docs/go-record-proxy/)).
 
-> [!IMPORTANT]  
+Optionally append the `--utils` flag. The [example](#generate-utilsgo) shows what the result of that is.
+
+> [!IMPORTANT]
+> Do not run the generator against a production data base file.
 > As with any code, please always test your generated code before putting it to use.
-## Example
+# Example
 
 For the example we have a simple PB schema of 3 collections `person`, `child` and `bank_account`. They look like this:
 
@@ -44,12 +47,14 @@ For the example we have a simple PB schema of 3 collections `person`, `child` an
 
 ```go
 type BankAccount struct {
+	// collection-name: bank_account
 	// system: id
 	Id    string
 	money int
 }
 
 type Child struct {
+	// collection-name: child
 	// system: id
 	Id   string
 	name string
@@ -57,6 +62,7 @@ type Child struct {
 }
 
 type Person struct {
+	// collection-name: person
 	// system: id
 	Id      string
 	name    string
@@ -73,6 +79,7 @@ Things to note about the template:
  - The `Id` field is marked as a system field and thus will not have getters/setters generated.
  - The `health` field is a PocketBase select type field which is always represented as an `int` (or `[]int` for multi select types) in the template. The field comment marks this fact.
  - The relation type fields `account` and `children` are already typed with the other template structs.
+ - All template structs have a `// collection-name:` comment on their first field that stores the original collection name.
 
  ### Now running `pocketbase-gogen generate`
 
@@ -82,6 +89,10 @@ Things to note about the template:
 ```go
 type BankAccount struct {
 	core.BaseRecordProxy
+}
+
+func (p *BankAccount) CollectionName() string {
+	return "bank_account"
 }
 
 func (p *BankAccount) Money() int {
@@ -98,6 +109,10 @@ func (p *BankAccount) SetMoney(money int) {
 ```go
 type Child struct {
 	core.BaseRecordProxy
+}
+
+func (p *Child) CollectionName() string {
+	return "child"
 }
 
 func (p *Child) Name() string {
@@ -128,11 +143,23 @@ const (
 	Bad
 )
 
-var zzHealthSelectTypeSelectNameMap = map[string]HealthSelectType{"good": 0, "medium": 1, "bad": 2}
-var zzHealthSelectTypeSelectIotaMap = map[HealthSelectType]string{0: "good", 1: "medium", 2: "bad"}
+var zzHealthSelectTypeSelectNameMap = map[string]HealthSelectType{
+	"good":   0,
+	"medium": 1,
+	"bad":    2,
+}
+var zzHealthSelectTypeSelectIotaMap = map[HealthSelectType]string{
+	0: "good",
+	1: "medium",
+	2: "bad",
+}
 
 type Person struct {
 	core.BaseRecordProxy
+}
+
+func (p *Person) CollectionName() string {
+	return "person"
 }
 
 func (p *Person) Name() string {
@@ -178,6 +205,7 @@ func (p *Person) Account() *BankAccount {
 }
 
 func (p *Person) SetAccount(account *BankAccount) {
+	p.Record.Set("account", account.Id)
 	e := p.Expand()
 	e["account"] = account.Record
 	p.SetExpand(e)
@@ -195,14 +223,20 @@ func (p *Person) Children() []*Child {
 
 func (p *Person) SetChildren(children []*Child) {
 	records := make([]*core.Record, len(children))
+	ids := make([]string, len(children))
 	for i, r := range children {
 		records[i] = r.Record
+		ids[i] = r.Record.Id
 	}
+	p.Record.Set("children", ids)
 	e := p.Expand()
 	e["children"] = records
 	p.SetExpand(e)
 }
 ```
+
+Every proxy has getters and setters generated for its fields plus a `CollectionName()` convenience method.
+`CollectionName()` is generated from the `// collection-name:` comment in the template.
 
 Bank Account and Child are straightforward. Things of interest about the Person generation:
 
@@ -222,7 +256,88 @@ Bank Account and Child are straightforward. Things of interest about the Person 
 
  - For the relation type fields `SetAccount` and `SetChildren` enable you to pass in other proxies just as easily as primitive types.
 
- ### `pocketbase-gogen` also converts methods that you manually add to your template
+## Generate `utils.go`
+### When running `pocketbase-gogen generate` with the `--utils` flag you get `utils.go`
+`utils.go` will be saved in the same package next to your output generated source code file.
+
+It looks like this:
+```go
+type Proxy interface{ BankAccount | Child | Person }
+
+// This interface constrains a type parameter of
+// a Proxy core type into its pointer type.
+type ProxyP[P Proxy] interface {
+	*P
+	core.RecordProxy
+	CollectionName() string
+}
+
+// Returns the collection name of a proxy type
+//
+//	collectionName := CName[ProxyType]()
+func CName[P Proxy, PP ProxyP[P]]() string {
+	return PP.CollectionName(nil)
+}
+
+// Creates a new record and wraps it in a new proxy
+//
+//	proxy := NewProxy[ProxyType](app)
+func NewProxy[P Proxy, PP ProxyP[P]](app core.App) (PP, error) {
+	var p PP = &P{}
+	collectionName := p.CollectionName()
+	collection, err := app.FindCachedCollectionByNameOrId(collectionName)
+	if err != nil {
+		return nil, err
+	}
+	record := core.NewRecord(collection)
+	p.SetProxyRecord(record)
+	return p, nil
+}
+
+// Wraps a record in a newly created proxy
+//
+//	proxy := WrapProxy[ProxyType](record)
+func WrapRecord[P Proxy, PP ProxyP[P]](record *core.Record) (PP, error) {
+	collectionName := record.Collection().Name
+	proxyCollectionName := PP.CollectionName(nil)
+	if collectionName != proxyCollectionName {
+		return nil, errors.New("the generic proxy type is not of the same collection as the given record")
+	}
+	var p PP = &P{}
+	p.SetProxyRecord(record)
+	return p, nil
+}
+
+type RelationField struct {
+	FieldName string
+	IsMulti   bool
+}
+
+// This map contains all relations between the collections that
+// have a proxy struct with a CollectionName() method.
+// It maps like this:
+//
+//	collection name
+//	 -> collection names that it is related to
+//	  -> list of fields that contain the relation values
+var Relations = map[string]map[string][]RelationField{
+	"person": {
+		"bank_account": {
+			{"account", false},
+		},
+		"child": {
+			{"children", true},
+		},
+	},
+}
+```
+
+- The util functions are documented with usage examples.
+- The type contstraint interfaces `Proxy` and `ProxyP` can also be used outside the utils for generic parameters of proxy-handling functions.
+- The `Relations` map is a helper for when you need to fetch related records to expand relations. It connects the names of relation type fields with the origin collection of the related records.
+
+## Custom Methods
+### `pocketbase-gogen` also converts methods that you manually add to your template
 
  > [!IMPORTANT]  
 > As said before, always test your generated code especially with custom methods.
@@ -395,3 +510,4 @@ func (p *Person) SwitchMyLifeUp() {
 - You can rename almost everything in the template. The comment at the top of the template file has instructions for that.
 - The `pocketbase-gogen` command needs access to go module imports that you are using (mostly the PocketBase module). Best run it from inside your project directory.
 - If you have reserved go keywords (e.g. `func`) as field names in your PB schema, the generator will escape them using a trailing underscore (`func_`).
+- When you delete the `// collection-name:` comment from a template struct, the `CollectionName()` method will not be generated and because of that the proxy type will not work with the functions from `utils.go`. The generator will warn of the missing comment.

@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	directFlag  bool
-	packageName string
+	directFlag    bool
+	packageName   string
+	generateUtils bool
 
 	generateCmd = &cobra.Command{
 		Use:   "generate [input path] [output path]",
@@ -34,6 +35,7 @@ Arguments:
 func init() {
 	generateCmd.Flags().BoolVarP(&directFlag, "direct", "d", false, "Skip the template and generate directly from the PB schema")
 	generateCmd.Flags().StringVarP(&packageName, "package", "p", "", "Override the output directory name with a chosen package name")
+	generateCmd.Flags().BoolVarP(&generateUtils, "utils", "u", false, "Additionally generate utils.go next to the output file")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) {
@@ -62,16 +64,35 @@ func runGenerate(cmd *cobra.Command, args []string) {
 		errCheck(err)
 	}
 
-	sourceCode, err := generator.Generate(templateSource, args[1], packageName)
+	parser, err := generator.NewTemplateParser(templateSource)
+	errCheck(err)
+	sourceCode, err := generator.Generate(parser, args[1], packageName)
 	errCheck(err)
 
-	out, err := os.Create(args[1])
+	proxyFile, err := os.Create(args[1])
 	errCheck(err)
-	defer out.Close()
-	_, err = out.Write(sourceCode)
+	defer proxyFile.Close()
+	_, err = proxyFile.Write(sourceCode)
 	errCheck(err)
 
 	log.Printf("Saved the generated code to %v", args[1])
+
+	if !generateUtils {
+		return
+	}
+
+	utilsPath := utilsPath(args[1])
+	sourceCode, err = generator.GenerateUtils(parser, utilsPath, packageName)
+	errCheck(err)
+
+	utilsFile, err := os.Create(utilsPath)
+	errCheck(err)
+	defer utilsFile.Close()
+	_, err = utilsFile.Write(sourceCode)
+	errCheck(err)
+
+	log.Printf("Saved the generated utils code to %v", utilsPath)
+
 	return
 }
 
@@ -86,4 +107,10 @@ Use the --direct flag if you want to generate directly from PB schema or use the
 	errCheck(err)
 
 	return source
+}
+
+func utilsPath(proxyPath string) string {
+	dirPath := filepath.Dir(proxyPath)
+	utilsPath := filepath.Join(dirPath, "utils.go")
+	return utilsPath
 }
