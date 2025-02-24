@@ -173,9 +173,17 @@ func (p *Parent) Child() *Child {
 }
 
 func (p *Parent) SetChild(child *Child) {
-	p.Record.Set("child", child.Id)
+	var id string
+	if child != nil {
+		id = child.Id
+	}
+	p.Record.Set("child", id)
 	e := p.Expand()
-	e["child"] = child.Record
+	if child != nil {
+		e["child"] = child.Record
+	} else {
+		delete(e, "child")
+	}
 	p.SetExpand(e)
 }
 

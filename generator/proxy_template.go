@@ -74,9 +74,17 @@ func (p *StructName) FuncName(fieldName FieldType) {
 
 // 7: Single relation setter declaration
 func (p *StructName) FuncName(fieldName *FieldType) {
-	p.Record.Set("key", fieldName.Id) 
+	var id string
+	if fieldName != nil {
+		id = fieldName.Id
+	}
+	p.Record.Set("key", id) 
 	e := p.Expand()
-	e["key"] = fieldName.Record
+	if fieldName != nil {
+		e["key"] = fieldName.Record
+	} else {
+		delete(e, "key")
+	}
 	p.SetExpand(e)
 }
 
