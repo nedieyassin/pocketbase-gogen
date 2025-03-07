@@ -205,9 +205,17 @@ func (p *Person) Account() *BankAccount {
 }
 
 func (p *Person) SetAccount(account *BankAccount) {
-	p.Record.Set("account", account.Id)
+	var id string
+	if account != nil {
+		id = account.Id
+	}
+	p.Record.Set("account", id)
 	e := p.Expand()
-	e["account"] = account.Record
+	if account != nil {
+		e["account"] = account.Record
+	} else {
+		delete(e, "account")
+	}
 	p.SetExpand(e)
 }
 
