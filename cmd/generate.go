@@ -14,6 +14,7 @@ var (
 	directFlag    bool
 	packageName   string
 	generateUtils bool
+	generateHooks bool
 
 	generateCmd = &cobra.Command{
 		Use:   "generate [input path] [output path]",
@@ -36,6 +37,7 @@ func init() {
 	generateCmd.Flags().BoolVarP(&directFlag, "direct", "d", false, "Skip the template and generate directly from the PB schema")
 	generateCmd.Flags().StringVarP(&packageName, "package", "p", "", "Override the output directory name with a chosen package name")
 	generateCmd.Flags().BoolVarP(&generateUtils, "utils", "u", false, "Additionally generate utils.go next to the output file")
+	generateCmd.Flags().BoolVarP(&generateHooks, "hooks", "j", false, "Additionally generate proxy_events.go and proxy_hooks.go next to the output file (auto-enables --utils)")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) {
@@ -77,7 +79,7 @@ func runGenerate(cmd *cobra.Command, args []string) {
 
 	log.Printf("Saved the generated code to %v", args[1])
 
-	if !generateUtils {
+	if !generateUtils && !generateHooks {
 		return
 	}
 
@@ -92,6 +94,10 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	errCheck(err)
 
 	log.Printf("Saved the generated utils code to %v", utilsPath)
+
+	if !generateHooks {
+		return
+	}
 
 	eventsPath := generatedFilePath(args[1], "proxy_events.go")
 	sourceCode, err = generator.GenerateProxyEvents(eventsPath, packageName)
