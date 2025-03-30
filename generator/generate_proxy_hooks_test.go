@@ -12,6 +12,12 @@ func TestProxyHooksGeneration(t *testing.T) {
 	// system: id
 	id string
 }
+
+type NoCollectionNameProxy struct {
+	// system: id
+	id string
+	other *Proxy1
+}
 `
 
 	expectedGeneration := `type Proxy1Event = ProxyRecordEvent[Proxy1, *Proxy1]

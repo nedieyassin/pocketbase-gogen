@@ -22,10 +22,14 @@ func GenerateProxyHooks(templateParser *Parser, savePath, packageName string) ([
 
 func hooksFromTemplate(parser *Parser) []ast.Decl {
 	decls := make([]ast.Decl, 0)
-	structNames := make([]string, len(parser.structSpecs))
+	structNames := make([]string, 0, len(parser.structSpecs))
 	collectionNames := parser.collectionNames
-	for i, s := range parser.structSpecs {
-		structNames[i] = s.Name.Name
+	for _, s := range parser.structSpecs {
+		structName := s.Name.Name
+		_, ok := collectionNames[structName]
+		if ok {
+			structNames = append(structNames, structName)
+		}
 	}
 
 	decls = append(decls, createEventAliases(structNames)...)
