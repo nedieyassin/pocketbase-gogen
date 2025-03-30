@@ -5,14 +5,12 @@ package generator
 var proxyHooksTemplateCode = 
 `package template
 
-// 0-4: Event type aliases (for readability)
 type Event = ProxyRecordEvent[StructName, *StructName]
 type EnrichEvent = ProxyRecordEnrichEvent[StructName, *StructName]
 type ErrorEvent = ProxyRecordErrorEvent[StructName, *StructName]
 type ListRequestEvent = ProxyRecordsListRequestEvent[StructName, *StructName]
 type RequestEvent = ProxyRecordRequestEvent[StructName, *StructName]
 
-// 5: Hook container struct
 type proxyHooks struct {
 	Enrich   *hook.Hook[*EnrichEvent]
 	Validate *hook.Hook[*Event]
@@ -39,7 +37,19 @@ type proxyHooks struct {
 	DeleteRequest *hook.Hook[*RequestEvent]
 }
 
-// 6: Hook struct constructor
+// Create a new set of proxy hooks and register them
+// on the given app. Keep in mind that calling this
+// multiple times will result in multiple duplicate
+// hooks being registered. So in general that should be
+// avoided.
+//
+// Usage with an exemplary User proxy that has a name field:
+// 	pHooks := NewProxyHooks(app)
+// 	pHooks.OnUserCreate.BindFunc(func(e *UserEvent) error {
+// 		userName := e.PRecord.Name() // <-- The PRecord field of the event contains the proxy (the type is *User)
+// 		fmt.Printf("Hello new user, %v!", userName)	
+// 		return e.Next()
+// 	})
 func NewProxyHooks(app core.App) *proxyHooks {
 	pHooks := &proxyHooks{
 		Enrich:             &hook.Hook[*EnrichEvent]{},
@@ -66,7 +76,6 @@ func NewProxyHooks(app core.App) *proxyHooks {
 	return pHooks
 }
 
-// 7: Registering function
 func (pHooks *proxyHooks) registerProxyHooks(app core.App) {
 	registerProxyEnrichEventHook(
 		app.OnRecordEnrich("collection_name"),

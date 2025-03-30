@@ -146,6 +146,7 @@ func loadTemplateASTs() error {
 
 	proxyEventCodeTemplate = f.Decls
 
+	opts |= parser.ParseComments
 	f, err = parser.ParseFile(fset, ".", proxyHooksTemplateCode, opts)
 	if err != nil {
 		return err
@@ -162,7 +163,6 @@ func loadTemplateASTs() error {
 	proxyHooksConstructorTemplate = f.Decls[6].(*ast.FuncDecl)
 	proxyHookRegistrationTemplate = f.Decls[7].(*ast.FuncDecl)
 
-	opts |= parser.ParseComments
 	f, err = parser.ParseFile(fset, ".", utilTemplateCode, opts)
 	if err != nil {
 		return err
