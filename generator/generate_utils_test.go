@@ -77,7 +77,7 @@ type NoCollectionNameProxy struct {
 //
 //	MyFunc[*ProxyType]()
 //
-// And even works with other type paramters:
+// And even works with other type parameters:
 //
 //	func MyFunc2[P Proxy, PP ProxyP[P]]() {
 //	    MyFunc[PP]()
@@ -164,7 +164,7 @@ var Relations = map[string]map[string][]RelationField{
 
 	equal, err := expectGeneratedUtils(template, expectedGeneration)
 	if err != nil {
-		t.Fatal("error during generation if utils")
+		t.Fatal("error during generation of utils")
 	}
 	if !equal {
 		t.Fatal("the template did not have the expected util generation result")
