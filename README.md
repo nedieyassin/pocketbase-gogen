@@ -355,7 +355,9 @@ This gives you access to the `NewProxyHooks(app core.App)` function. It returns 
 In the example, `proxy_hooks.go` looks like this:
 
 <details>
-<summary>`proxy_hooks.go`</summary>
+
+<summary>Click here to see the file contents</summary>
+
 ```go
 type BankAccountEvent = ProxyRecordEvent[BankAccount, *BankAccount]
 type BankAccountEnrichEvent = ProxyRecordEnrichEvent[BankAccount, *BankAccount]
@@ -570,6 +572,7 @@ func (pHooks *proxyHooks) registerProxyHooks(app core.App) {
 	registerProxyRequestEventHook(app.OnRecordDeleteRequest("person"), pHooks.OnPersonDeleteRequest)
 }
 ```
+
 </details>
 
 ### Here's an example on how to use the proxy hooks
