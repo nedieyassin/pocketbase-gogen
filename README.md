@@ -30,7 +30,11 @@ pocketbase-gogen generate ./yourmodule/pbschema/template.go ./yourmodule/generat
 You will now have `proxies.go` which contains the actual proxy structs
 that you can drop in to use instead of raw `core.Record` structs from PocketBase ([PB doc on proxy usage](https://pocketbase.io/docs/go-record-proxy/)).
 
-Optionally append the `--utils` flag. The [example](#generate-utilsgo) shows what the result of that is.
+Optionally append the following flags:
+
+ - `--utils` flag. The [example](#generate-utilsgo) shows what the result of that is.
+ - `--hooks` flag. Its effect is also illustrated by [example](#generate-proxy-hooks).
+
 
 > [!IMPORTANT]
 > Do not run the generator against a production data base file.
@@ -344,6 +348,267 @@ var Relations = map[string]map[string][]RelationField{
 - The type contstraint interfaces `Proxy` and `ProxyP` can also be used outside the utils for generic parameters of proxy-handling functions.
 - The `Relations` map is a helper for when you need to fetch related records to expand relations. It connects the names of relation type fields with the origin collection of the related records.
 
+## Generate proxy hooks
+### When running `pocketbase-gogen generate` with the `--hooks` flag you get `proxy_events.go` and `proxy_hooks.go`
+
+This gives you access to the `NewProxyHooks(app core.App)` function. It returns a struct that has various hooks _per proxy type_.
+In the example, `proxy_hooks.go` looks like this:
+
+<details>
+<summary>`proxy_hooks.go`</summary>
+```go
+type BankAccountEvent = ProxyRecordEvent[BankAccount, *BankAccount]
+type BankAccountEnrichEvent = ProxyRecordEnrichEvent[BankAccount, *BankAccount]
+type BankAccountErrorEvent = ProxyRecordErrorEvent[BankAccount, *BankAccount]
+type BankAccountListRequestEvent = ProxyRecordsListRequestEvent[BankAccount, *BankAccount]
+type BankAccountRequestEvent = ProxyRecordRequestEvent[BankAccount, *BankAccount]
+type ChildEvent = ProxyRecordEvent[Child, *Child]
+type ChildEnrichEvent = ProxyRecordEnrichEvent[Child, *Child]
+type ChildErrorEvent = ProxyRecordErrorEvent[Child, *Child]
+type ChildListRequestEvent = ProxyRecordsListRequestEvent[Child, *Child]
+type ChildRequestEvent = ProxyRecordRequestEvent[Child, *Child]
+type PersonEvent = ProxyRecordEvent[Person, *Person]
+type PersonEnrichEvent = ProxyRecordEnrichEvent[Person, *Person]
+type PersonErrorEvent = ProxyRecordErrorEvent[Person, *Person]
+type PersonListRequestEvent = ProxyRecordsListRequestEvent[Person, *Person]
+type PersonRequestEvent = ProxyRecordRequestEvent[Person, *Person]
+type proxyHooks struct {
+	OnBankAccountEnrich             *hook.Hook[*BankAccountEnrichEvent]
+	OnBankAccountValidate           *hook.Hook[*BankAccountEvent]
+	OnBankAccountCreate             *hook.Hook[*BankAccountEvent]
+	OnBankAccountCreateExecute      *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterCreateSuccess *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterCreateError   *hook.Hook[*BankAccountErrorEvent]
+	OnBankAccountUpdate             *hook.Hook[*BankAccountEvent]
+	OnBankAccountUpdateExecute      *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterUpdateSuccess *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterUpdateError   *hook.Hook[*BankAccountErrorEvent]
+	OnBankAccountDelete             *hook.Hook[*BankAccountEvent]
+	OnBankAccountDeleteExecute      *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterDeleteSuccess *hook.Hook[*BankAccountEvent]
+	OnBankAccountAfterDeleteError   *hook.Hook[*BankAccountErrorEvent]
+	OnBankAccountListRequest        *hook.Hook[*BankAccountListRequestEvent]
+	OnBankAccountViewRequest        *hook.Hook[*BankAccountRequestEvent]
+	OnBankAccountCreateRequest      *hook.Hook[*BankAccountRequestEvent]
+	OnBankAccountUpdateRequest      *hook.Hook[*BankAccountRequestEvent]
+	OnBankAccountDeleteRequest      *hook.Hook[*BankAccountRequestEvent]
+	OnChildEnrich                   *hook.Hook[*ChildEnrichEvent]
+	OnChildValidate                 *hook.Hook[*ChildEvent]
+	OnChildCreate                   *hook.Hook[*ChildEvent]
+	OnChildCreateExecute            *hook.Hook[*ChildEvent]
+	OnChildAfterCreateSuccess       *hook.Hook[*ChildEvent]
+	OnChildAfterCreateError         *hook.Hook[*ChildErrorEvent]
+	OnChildUpdate                   *hook.Hook[*ChildEvent]
+	OnChildUpdateExecute            *hook.Hook[*ChildEvent]
+	OnChildAfterUpdateSuccess       *hook.Hook[*ChildEvent]
+	OnChildAfterUpdateError         *hook.Hook[*ChildErrorEvent]
+	OnChildDelete                   *hook.Hook[*ChildEvent]
+	OnChildDeleteExecute            *hook.Hook[*ChildEvent]
+	OnChildAfterDeleteSuccess       *hook.Hook[*ChildEvent]
+	OnChildAfterDeleteError         *hook.Hook[*ChildErrorEvent]
+	OnChildListRequest              *hook.Hook[*ChildListRequestEvent]
+	OnChildViewRequest              *hook.Hook[*ChildRequestEvent]
+	OnChildCreateRequest            *hook.Hook[*ChildRequestEvent]
+	OnChildUpdateRequest            *hook.Hook[*ChildRequestEvent]
+	OnChildDeleteRequest            *hook.Hook[*ChildRequestEvent]
+	OnPersonEnrich                  *hook.Hook[*PersonEnrichEvent]
+	OnPersonValidate                *hook.Hook[*PersonEvent]
+	OnPersonCreate                  *hook.Hook[*PersonEvent]
+	OnPersonCreateExecute           *hook.Hook[*PersonEvent]
+	OnPersonAfterCreateSuccess      *hook.Hook[*PersonEvent]
+	OnPersonAfterCreateError        *hook.Hook[*PersonErrorEvent]
+	OnPersonUpdate                  *hook.Hook[*PersonEvent]
+	OnPersonUpdateExecute           *hook.Hook[*PersonEvent]
+	OnPersonAfterUpdateSuccess      *hook.Hook[*PersonEvent]
+	OnPersonAfterUpdateError        *hook.Hook[*PersonErrorEvent]
+	OnPersonDelete                  *hook.Hook[*PersonEvent]
+	OnPersonDeleteExecute           *hook.Hook[*PersonEvent]
+	OnPersonAfterDeleteSuccess      *hook.Hook[*PersonEvent]
+	OnPersonAfterDeleteError        *hook.Hook[*PersonErrorEvent]
+	OnPersonListRequest             *hook.Hook[*PersonListRequestEvent]
+	OnPersonViewRequest             *hook.Hook[*PersonRequestEvent]
+	OnPersonCreateRequest           *hook.Hook[*PersonRequestEvent]
+	OnPersonUpdateRequest           *hook.Hook[*PersonRequestEvent]
+	OnPersonDeleteRequest           *hook.Hook[*PersonRequestEvent]
+}
+
+// Create a new set of proxy hooks and register them
+// on the given app. Keep in mind that calling this
+// multiple times will result in multiple duplicate
+// hooks being registered. So in general that should be
+// avoided.
+//
+// Usage with an exemplary User proxy that has a name field:
+//
+//	pHooks := NewProxyHooks(app)
+//	pHooks.OnUserCreate.BindFunc(func(e *UserEvent) error {
+//		var user *User = e.PRecord // <-- Proxy events contain the proxy in the PRecord field
+//		fmt.Printf("Hello new user, %v!", user.Name())
+//		return e.Next()
+//	})
+func NewProxyHooks(app core.App) *proxyHooks {
+	pHooks := &proxyHooks{
+		OnBankAccountEnrich:             &hook.Hook[*BankAccountEnrichEvent]{},
+		OnBankAccountValidate:           &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountCreate:             &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountCreateExecute:      &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterCreateSuccess: &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterCreateError:   &hook.Hook[*BankAccountErrorEvent]{},
+		OnBankAccountUpdate:             &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountUpdateExecute:      &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterUpdateSuccess: &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterUpdateError:   &hook.Hook[*BankAccountErrorEvent]{},
+		OnBankAccountDelete:             &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountDeleteExecute:      &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterDeleteSuccess: &hook.Hook[*BankAccountEvent]{},
+		OnBankAccountAfterDeleteError:   &hook.Hook[*BankAccountErrorEvent]{},
+		OnBankAccountListRequest:        &hook.Hook[*BankAccountListRequestEvent]{},
+		OnBankAccountViewRequest:        &hook.Hook[*BankAccountRequestEvent]{},
+		OnBankAccountCreateRequest:      &hook.Hook[*BankAccountRequestEvent]{},
+		OnBankAccountUpdateRequest:      &hook.Hook[*BankAccountRequestEvent]{},
+		OnBankAccountDeleteRequest:      &hook.Hook[*BankAccountRequestEvent]{},
+		OnChildEnrich:                   &hook.Hook[*ChildEnrichEvent]{},
+		OnChildValidate:                 &hook.Hook[*ChildEvent]{},
+		OnChildCreate:                   &hook.Hook[*ChildEvent]{},
+		OnChildCreateExecute:            &hook.Hook[*ChildEvent]{},
+		OnChildAfterCreateSuccess:       &hook.Hook[*ChildEvent]{},
+		OnChildAfterCreateError:         &hook.Hook[*ChildErrorEvent]{},
+		OnChildUpdate:                   &hook.Hook[*ChildEvent]{},
+		OnChildUpdateExecute:            &hook.Hook[*ChildEvent]{},
+		OnChildAfterUpdateSuccess:       &hook.Hook[*ChildEvent]{},
+		OnChildAfterUpdateError:         &hook.Hook[*ChildErrorEvent]{},
+		OnChildDelete:                   &hook.Hook[*ChildEvent]{},
+		OnChildDeleteExecute:            &hook.Hook[*ChildEvent]{},
+		OnChildAfterDeleteSuccess:       &hook.Hook[*ChildEvent]{},
+		OnChildAfterDeleteError:         &hook.Hook[*ChildErrorEvent]{},
+		OnChildListRequest:              &hook.Hook[*ChildListRequestEvent]{},
+		OnChildViewRequest:              &hook.Hook[*ChildRequestEvent]{},
+		OnChildCreateRequest:            &hook.Hook[*ChildRequestEvent]{},
+		OnChildUpdateRequest:            &hook.Hook[*ChildRequestEvent]{},
+		OnChildDeleteRequest:            &hook.Hook[*ChildRequestEvent]{},
+		OnPersonEnrich:                  &hook.Hook[*PersonEnrichEvent]{},
+		OnPersonValidate:                &hook.Hook[*PersonEvent]{},
+		OnPersonCreate:                  &hook.Hook[*PersonEvent]{},
+		OnPersonCreateExecute:           &hook.Hook[*PersonEvent]{},
+		OnPersonAfterCreateSuccess:      &hook.Hook[*PersonEvent]{},
+		OnPersonAfterCreateError:        &hook.Hook[*PersonErrorEvent]{},
+		OnPersonUpdate:                  &hook.Hook[*PersonEvent]{},
+		OnPersonUpdateExecute:           &hook.Hook[*PersonEvent]{},
+		OnPersonAfterUpdateSuccess:      &hook.Hook[*PersonEvent]{},
+		OnPersonAfterUpdateError:        &hook.Hook[*PersonErrorEvent]{},
+		OnPersonDelete:                  &hook.Hook[*PersonEvent]{},
+		OnPersonDeleteExecute:           &hook.Hook[*PersonEvent]{},
+		OnPersonAfterDeleteSuccess:      &hook.Hook[*PersonEvent]{},
+		OnPersonAfterDeleteError:        &hook.Hook[*PersonErrorEvent]{},
+		OnPersonListRequest:             &hook.Hook[*PersonListRequestEvent]{},
+		OnPersonViewRequest:             &hook.Hook[*PersonRequestEvent]{},
+		OnPersonCreateRequest:           &hook.Hook[*PersonRequestEvent]{},
+		OnPersonUpdateRequest:           &hook.Hook[*PersonRequestEvent]{},
+		OnPersonDeleteRequest:           &hook.Hook[*PersonRequestEvent]{},
+	}
+	pHooks.registerProxyHooks(app)
+	return pHooks
+}
+
+func (pHooks *proxyHooks) registerProxyHooks(app core.App) {
+	registerProxyEnrichEventHook(app.OnRecordEnrich("bank_account"), pHooks.OnBankAccountEnrich)
+	registerProxyEventHook(app.OnRecordValidate("bank_account"), pHooks.OnBankAccountValidate)
+	registerProxyEventHook(app.OnRecordCreate("bank_account"), pHooks.OnBankAccountCreate)
+	registerProxyEventHook(app.OnRecordCreateExecute("bank_account"), pHooks.OnBankAccountCreateExecute)
+	registerProxyEventHook(app.OnRecordAfterCreateSuccess("bank_account"), pHooks.OnBankAccountAfterCreateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterCreateError("bank_account"), pHooks.OnBankAccountAfterCreateError)
+	registerProxyEventHook(app.OnRecordUpdate("bank_account"), pHooks.OnBankAccountUpdate)
+	registerProxyEventHook(app.OnRecordUpdateExecute("bank_account"), pHooks.OnBankAccountUpdateExecute)
+	registerProxyEventHook(app.OnRecordAfterUpdateSuccess("bank_account"), pHooks.OnBankAccountAfterUpdateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterUpdateError("bank_account"), pHooks.OnBankAccountAfterUpdateError)
+	registerProxyEventHook(app.OnRecordDelete("bank_account"), pHooks.OnBankAccountDelete)
+	registerProxyEventHook(app.OnRecordDeleteExecute("bank_account"), pHooks.OnBankAccountDeleteExecute)
+	registerProxyEventHook(app.OnRecordAfterDeleteSuccess("bank_account"), pHooks.OnBankAccountAfterDeleteSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterDeleteError("bank_account"), pHooks.OnBankAccountAfterDeleteError)
+	registerProxyListRequestEventHook(app.OnRecordsListRequest("bank_account"), pHooks.OnBankAccountListRequest)
+	registerProxyRequestEventHook(app.OnRecordViewRequest("bank_account"), pHooks.OnBankAccountViewRequest)
+	registerProxyRequestEventHook(app.OnRecordCreateRequest("bank_account"), pHooks.OnBankAccountCreateRequest)
+	registerProxyRequestEventHook(app.OnRecordUpdateRequest("bank_account"), pHooks.OnBankAccountUpdateRequest)
+	registerProxyRequestEventHook(app.OnRecordDeleteRequest("bank_account"), pHooks.OnBankAccountDeleteRequest)
+	registerProxyEnrichEventHook(app.OnRecordEnrich("child"), pHooks.OnChildEnrich)
+	registerProxyEventHook(app.OnRecordValidate("child"), pHooks.OnChildValidate)
+	registerProxyEventHook(app.OnRecordCreate("child"), pHooks.OnChildCreate)
+	registerProxyEventHook(app.OnRecordCreateExecute("child"), pHooks.OnChildCreateExecute)
+	registerProxyEventHook(app.OnRecordAfterCreateSuccess("child"), pHooks.OnChildAfterCreateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterCreateError("child"), pHooks.OnChildAfterCreateError)
+	registerProxyEventHook(app.OnRecordUpdate("child"), pHooks.OnChildUpdate)
+	registerProxyEventHook(app.OnRecordUpdateExecute("child"), pHooks.OnChildUpdateExecute)
+	registerProxyEventHook(app.OnRecordAfterUpdateSuccess("child"), pHooks.OnChildAfterUpdateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterUpdateError("child"), pHooks.OnChildAfterUpdateError)
+	registerProxyEventHook(app.OnRecordDelete("child"), pHooks.OnChildDelete)
+	registerProxyEventHook(app.OnRecordDeleteExecute("child"), pHooks.OnChildDeleteExecute)
+	registerProxyEventHook(app.OnRecordAfterDeleteSuccess("child"), pHooks.OnChildAfterDeleteSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterDeleteError("child"), pHooks.OnChildAfterDeleteError)
+	registerProxyListRequestEventHook(app.OnRecordsListRequest("child"), pHooks.OnChildListRequest)
+	registerProxyRequestEventHook(app.OnRecordViewRequest("child"), pHooks.OnChildViewRequest)
+	registerProxyRequestEventHook(app.OnRecordCreateRequest("child"), pHooks.OnChildCreateRequest)
+	registerProxyRequestEventHook(app.OnRecordUpdateRequest("child"), pHooks.OnChildUpdateRequest)
+	registerProxyRequestEventHook(app.OnRecordDeleteRequest("child"), pHooks.OnChildDeleteRequest)
+	registerProxyEnrichEventHook(app.OnRecordEnrich("person"), pHooks.OnPersonEnrich)
+	registerProxyEventHook(app.OnRecordValidate("person"), pHooks.OnPersonValidate)
+	registerProxyEventHook(app.OnRecordCreate("person"), pHooks.OnPersonCreate)
+	registerProxyEventHook(app.OnRecordCreateExecute("person"), pHooks.OnPersonCreateExecute)
+	registerProxyEventHook(app.OnRecordAfterCreateSuccess("person"), pHooks.OnPersonAfterCreateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterCreateError("person"), pHooks.OnPersonAfterCreateError)
+	registerProxyEventHook(app.OnRecordUpdate("person"), pHooks.OnPersonUpdate)
+	registerProxyEventHook(app.OnRecordUpdateExecute("person"), pHooks.OnPersonUpdateExecute)
+	registerProxyEventHook(app.OnRecordAfterUpdateSuccess("person"), pHooks.OnPersonAfterUpdateSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterUpdateError("person"), pHooks.OnPersonAfterUpdateError)
+	registerProxyEventHook(app.OnRecordDelete("person"), pHooks.OnPersonDelete)
+	registerProxyEventHook(app.OnRecordDeleteExecute("person"), pHooks.OnPersonDeleteExecute)
+	registerProxyEventHook(app.OnRecordAfterDeleteSuccess("person"), pHooks.OnPersonAfterDeleteSuccess)
+	registerProxyErrorEventHook(app.OnRecordAfterDeleteError("person"), pHooks.OnPersonAfterDeleteError)
+	registerProxyListRequestEventHook(app.OnRecordsListRequest("person"), pHooks.OnPersonListRequest)
+	registerProxyRequestEventHook(app.OnRecordViewRequest("person"), pHooks.OnPersonViewRequest)
+	registerProxyRequestEventHook(app.OnRecordCreateRequest("person"), pHooks.OnPersonCreateRequest)
+	registerProxyRequestEventHook(app.OnRecordUpdateRequest("person"), pHooks.OnPersonUpdateRequest)
+	registerProxyRequestEventHook(app.OnRecordDeleteRequest("person"), pHooks.OnPersonDeleteRequest)
+}
+```
+</details>
+
+### Here's an example on how to use the proxy hooks
+
+```go
+pHooks := NewProxyHooks(app)
+
+pHooks.OnPersonCreate(func(e *PersonEvent) error {
+	var *Person person = e.PRecord // The event carries a proxy of the changed record
+	fmt.Printf("Hello new person, %v!", person.Name())
+	return e.Next()
+})
+```
+
+The following PocketBase hooks will be generated as proxy hooks:
+
+ - `OnRecordEnrich`
+ - `OnRecordValidate`
+ - `OnRecordCreate`
+ - `OnRecordCreateExecute`
+ - `OnRecordAfterCreateSuccess`
+ - `OnRecordAfterCreateError`
+ - `OnRecordCreateRequest`
+ - `OnRecordUpdate`
+ - `OnRecordUpdateExecute`
+ - `OnRecordAfterUpdateSuccess`
+ - `OnRecordAfterUpdateError`
+ - `OnRecordUpdateRequest`
+ - `OnRecordDelete`
+ - `OnRecordDeleteExecute`
+ - `OnRecordAfterDeleteSuccess`
+ - `OnRecordAfterDeleteError`
+ - `OnRecordDeleteRequest`
+ - `OnRecordsListRequest`
+ - `OnRecordViewRequest`
+ 
+Each of these hooks gets generated for every proxy type.
+The corresponding proxy hooks are named by replacing "`Record`" with the proxy struct name (e.g. `OnPersonCreate`).
+
 ## Custom Methods
 ### `pocketbase-gogen` also converts methods that you manually add to your template
 
@@ -518,4 +783,4 @@ func (p *Person) SwitchMyLifeUp() {
 - You can rename almost everything in the template. The comment at the top of the template file has instructions for that.
 - The `pocketbase-gogen` command needs access to go module imports that you are using (mostly the PocketBase module). Best run it from inside your project directory.
 - If you have reserved go keywords (e.g. `func`) as field names in your PB schema, the generator will escape them using a trailing underscore (`func_`).
-- When you delete the `// collection-name:` comment from a template struct, the `CollectionName()` method will not be generated and because of that the proxy type will not work with the functions from `utils.go`. The generator will warn of the missing comment.
+- When you delete the `// collection-name:` comment from a template struct, the `CollectionName()` method will not be generated and because of that the proxy type will not work with the functions from `utils.go`. It will also not get proxy hooks generated when using `--hooks`. The generator will warn of the missing comment.
