@@ -46,8 +46,8 @@ type proxyHooks struct {
 // Usage with an exemplary User proxy that has a name field:
 // 	pHooks := NewProxyHooks(app)
 // 	pHooks.OnUserCreate.BindFunc(func(e *UserEvent) error {
-// 		userName := e.PRecord.Name() // <-- The PRecord field of the event contains the proxy (the type is *User)
-// 		fmt.Printf("Hello new user, %v!", userName)	
+// 		var user *User = e.PRecord // <-- Proxy events contain the proxy in the PRecord field
+// 		fmt.Printf("Hello new user, %v!", user.Name())	
 // 		return e.Next()
 // 	})
 func NewProxyHooks(app core.App) *proxyHooks {
