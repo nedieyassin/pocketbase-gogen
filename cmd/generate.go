@@ -81,7 +81,7 @@ func runGenerate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	utilsPath := utilsPath(args[1])
+	utilsPath := generatedFilePath(args[1], "utils.go")
 	sourceCode, err = generator.GenerateUtils(parser, utilsPath, packageName)
 	errCheck(err)
 
@@ -92,6 +92,30 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	errCheck(err)
 
 	log.Printf("Saved the generated utils code to %v", utilsPath)
+
+	eventsPath := generatedFilePath(args[1], "proxy_events.go")
+	sourceCode, err = generator.GenerateProxyEvents(eventsPath, packageName)
+	errCheck(err)
+
+	eventsFile, err := os.Create(eventsPath)
+	errCheck(err)
+	defer eventsFile.Close()
+	_, err = eventsFile.Write(sourceCode)
+	errCheck(err)
+
+	log.Printf("Saved the generated events code to %v", eventsPath)
+
+	hooksPath := generatedFilePath(args[1], "proxy_hooks.go")
+	sourceCode, err = generator.GenerateProxyHooks(parser, hooksPath, packageName)
+	errCheck(err)
+
+	hooksFile, err := os.Create(hooksPath)
+	errCheck(err)
+	defer hooksFile.Close()
+	_, err = hooksFile.Write(sourceCode)
+	errCheck(err)
+
+	log.Printf("Saved the generated events code to %v", hooksPath)
 
 	return
 }
@@ -109,8 +133,8 @@ Use the --direct flag if you want to generate directly from PB schema or use the
 	return source
 }
 
-func utilsPath(proxyPath string) string {
+func generatedFilePath(proxyPath, fileName string) string {
 	dirPath := filepath.Dir(proxyPath)
-	utilsPath := filepath.Join(dirPath, "utils.go")
+	utilsPath := filepath.Join(dirPath, fileName)
 	return utilsPath
 }

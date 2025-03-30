@@ -29,6 +29,19 @@ var (
 
 	collectionNameGetterTemplate *ast.FuncDecl
 
+	proxyEventCodeTemplate []ast.Decl
+
+	proxyEventAliasTemplate,
+	proxyEnrichEventAliasTemplate,
+	proxyErrorEventAliasTemplate,
+	proxyListEventAliasTemplate,
+	proxyRequestEventAliasTemplate *ast.GenDecl
+
+	proxyHooksTemplate *ast.GenDecl
+
+	proxyHooksConstructorTemplate,
+	proxyHookRegistrationTemplate *ast.FuncDecl
+
 	proxyInterfaceTemplate,
 	proxyPInterfaceTemplate *ast.GenDecl
 
@@ -125,6 +138,29 @@ func loadTemplateASTs() error {
 	multiSelectSetterTemplate = f.Decls[10].(*ast.FuncDecl)
 
 	collectionNameGetterTemplate = f.Decls[11].(*ast.FuncDecl)
+
+	f, err = parser.ParseFile(fset, ".", proxyEventsTemplateCode, opts)
+	if err != nil {
+		return err
+	}
+
+	proxyEventCodeTemplate = f.Decls
+
+	f, err = parser.ParseFile(fset, ".", proxyHooksTemplateCode, opts)
+	if err != nil {
+		return err
+	}
+
+	proxyEventAliasTemplate = f.Decls[0].(*ast.GenDecl)
+	proxyEnrichEventAliasTemplate = f.Decls[1].(*ast.GenDecl)
+	proxyErrorEventAliasTemplate = f.Decls[2].(*ast.GenDecl)
+	proxyListEventAliasTemplate = f.Decls[3].(*ast.GenDecl)
+	proxyRequestEventAliasTemplate = f.Decls[4].(*ast.GenDecl)
+
+	proxyHooksTemplate = f.Decls[5].(*ast.GenDecl)
+
+	proxyHooksConstructorTemplate = f.Decls[6].(*ast.FuncDecl)
+	proxyHookRegistrationTemplate = f.Decls[7].(*ast.FuncDecl)
 
 	opts |= parser.ParseComments
 	f, err = parser.ParseFile(fset, ".", utilTemplateCode, opts)
@@ -635,6 +671,81 @@ func relationFieldLits(relationFields []relationField) []ast.Expr {
 	}
 
 	return lits
+}
+
+func newEventTypeAliasDecl(template *ast.GenDecl, structName string) *ast.GenDecl {
+	alias := astcopy.GenDecl(template)
+
+	typeSpec := alias.Specs[0].(*ast.TypeSpec)
+	typeSpec.Name.Name = structName + typeSpec.Name.Name
+
+	genericArgs := typeSpec.Type.(*ast.IndexListExpr).Indices
+	genericArgs[0].(*ast.Ident).Name = structName
+	genericArgs[1].(*ast.StarExpr).X.(*ast.Ident).Name = structName
+
+	return alias
+}
+
+func newProxyHooksStructDecl() *ast.GenDecl {
+	decl := astcopy.GenDecl(proxyHooksTemplate)
+	spec := decl.Specs[0].(*ast.TypeSpec)
+	structType := spec.Type.(*ast.StructType)
+	structType.Fields = &ast.FieldList{}
+	return decl
+}
+
+func newHookField(template *ast.Field, structName string) *ast.Field {
+	field := astcopy.Field(template)
+
+	name := field.Names[0]
+	name.Name = "On" + structName + name.Name
+
+	genericArg := field.Type.(*ast.StarExpr).X.(*ast.IndexExpr).Index.(*ast.StarExpr)
+	genericTypeName := genericArg.X.(*ast.Ident)
+	genericTypeName.Name = structName + genericTypeName.Name
+
+	return field
+}
+
+func newProxyHooksConstructor() *ast.FuncDecl {
+	decl := astcopy.FuncDecl(proxyHooksConstructorTemplate)
+	createStmt := decl.Body.List[0].(*ast.AssignStmt)
+	structLit := createStmt.Rhs[0].(*ast.UnaryExpr).X.(*ast.CompositeLit)
+	structLit.Elts = []ast.Expr{}
+	return decl
+}
+
+func newHookConstructorArgument(template *ast.KeyValueExpr, structName string) *ast.KeyValueExpr {
+	expr := astcopy.KeyValueExpr(template)
+
+	key := expr.Key.(*ast.Ident)
+	key.Name = "On" + structName + key.Name
+
+	genericArg := expr.Value.(*ast.UnaryExpr).X.(*ast.CompositeLit).Type.(*ast.IndexExpr).Index.(*ast.StarExpr)
+	genericTypeName := genericArg.X.(*ast.Ident)
+	genericTypeName.Name = structName + genericTypeName.Name
+
+	return expr
+}
+
+func newHookRegistrationFuncDecl() *ast.FuncDecl {
+	decl := astcopy.FuncDecl(proxyHookRegistrationTemplate)
+	decl.Body.List = []ast.Stmt{}
+	return decl
+}
+
+func newHookRegistrationCallExpr(template *ast.ExprStmt, structName, collectionName string) *ast.ExprStmt {
+	expr := astcopy.ExprStmt(template)
+
+	args := expr.X.(*ast.CallExpr).Args
+
+	recordHookGetter := args[0].(*ast.CallExpr)
+	recordHookGetter.Args[0].(*ast.BasicLit).Value = "\"" + collectionName + "\""
+
+	proxyHookSelector := args[1].(*ast.SelectorExpr)
+	proxyHookSelector.Sel.Name = "On" + structName + proxyHookSelector.Sel.Name
+
+	return expr
 }
 
 func wrapGeneratedDeclarations(decls []ast.Decl, packageName string) *ast.File {

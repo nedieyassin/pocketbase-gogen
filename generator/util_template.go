@@ -35,7 +35,7 @@ type Proxy interface {}
 //
 //  MyFunc[*ProxyType]()
 //
-// And even works with other type paramters:
+// And even works with other type parameters:
 //
 //  func MyFunc2[P Proxy, PP ProxyP[P]]() {
 //      MyFunc[PP]()
