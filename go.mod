@@ -6,7 +6,7 @@ require (
 	github.com/go-toolsmith/astcopy v1.1.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/pocketbase/pocketbase v0.25.4
-	github.com/snonky/astpos v0.1.1
+	github.com/snonky/astpos v0.1.3
 )
 
 require (
@@ -75,3 +75,5 @@ require (
 	modernc.org/memory v1.8.2 // indirect
 	modernc.org/sqlite v1.34.5 // indirect
 )
+
+replace github.com/snonky/astpos => ../astpos
