@@ -374,7 +374,10 @@ type PersonEnrichEvent = ProxyRecordEnrichEvent[Person, *Person]
 type PersonErrorEvent = ProxyRecordErrorEvent[Person, *Person]
 type PersonListRequestEvent = ProxyRecordsListRequestEvent[Person, *Person]
 type PersonRequestEvent = ProxyRecordRequestEvent[Person, *Person]
-type proxyHooks struct {
+
+// This struct is a container for all proxy hooks.
+// Use NewProxyHooks(app core.App) to create it once.
+type ProxyHooks struct {
 	OnBankAccountEnrich             *hook.Hook[*BankAccountEnrichEvent]
 	OnBankAccountValidate           *hook.Hook[*BankAccountEvent]
 	OnBankAccountCreate             *hook.Hook[*BankAccountEvent]
@@ -448,8 +451,8 @@ type proxyHooks struct {
 //		fmt.Printf("Hello new user, %v!", user.Name())
 //		return e.Next()
 //	})
-func NewProxyHooks(app core.App) *proxyHooks {
-	pHooks := &proxyHooks{
+func NewProxyHooks(app core.App) *ProxyHooks {
+	pHooks := &ProxyHooks{
 		OnBankAccountEnrich:             &hook.Hook[*BankAccountEnrichEvent]{},
 		OnBankAccountValidate:           &hook.Hook[*BankAccountEvent]{},
 		OnBankAccountCreate:             &hook.Hook[*BankAccountEvent]{},
@@ -512,7 +515,7 @@ func NewProxyHooks(app core.App) *proxyHooks {
 	return pHooks
 }
 
-func (pHooks *proxyHooks) registerProxyHooks(app core.App) {
+func (pHooks *ProxyHooks) registerProxyHooks(app core.App) {
 	registerProxyEnrichEventHook(app.OnRecordEnrich("bank_account"), pHooks.OnBankAccountEnrich)
 	registerProxyEventHook(app.OnRecordValidate("bank_account"), pHooks.OnBankAccountValidate)
 	registerProxyEventHook(app.OnRecordCreate("bank_account"), pHooks.OnBankAccountCreate)
