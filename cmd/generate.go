@@ -121,9 +121,7 @@ func runGenerate(cmd *cobra.Command, args []string) {
 	_, err = hooksFile.Write(sourceCode)
 	errCheck(err)
 
-	log.Printf("Saved the generated events code to %v", hooksPath)
-
-	return
+	log.Printf("Saved the generated hooks code to %v", hooksPath)
 }
 
 func readTemplate(filename string) []byte {
@@ -141,6 +139,5 @@ Use the --direct flag if you want to generate directly from PB schema or use the
 
 func generatedFilePath(proxyPath, fileName string) string {
 	dirPath := filepath.Dir(proxyPath)
-	utilsPath := filepath.Join(dirPath, fileName)
-	return utilsPath
+	return filepath.Join(dirPath, fileName)
 }

@@ -25,7 +25,10 @@ type Proxy1EnrichEvent = ProxyRecordEnrichEvent[Proxy1, *Proxy1]
 type Proxy1ErrorEvent = ProxyRecordErrorEvent[Proxy1, *Proxy1]
 type Proxy1ListRequestEvent = ProxyRecordsListRequestEvent[Proxy1, *Proxy1]
 type Proxy1RequestEvent = ProxyRecordRequestEvent[Proxy1, *Proxy1]
-type proxyHooks struct {
+
+// This struct is a container for all proxy hooks.
+// Use NewProxyHooks(app core.App) to create it once.
+type ProxyHooks struct {
 	OnProxy1Enrich             *hook.Hook[*Proxy1EnrichEvent]
 	OnProxy1Validate           *hook.Hook[*Proxy1Event]
 	OnProxy1Create             *hook.Hook[*Proxy1Event]
@@ -61,8 +64,8 @@ type proxyHooks struct {
 //		fmt.Printf("Hello new user, %v!", user.Name())
 //		return e.Next()
 //	})
-func NewProxyHooks(app core.App) *proxyHooks {
-	pHooks := &proxyHooks{
+func NewProxyHooks(app core.App) *ProxyHooks {
+	pHooks := &ProxyHooks{
 		OnProxy1Enrich:             &hook.Hook[*Proxy1EnrichEvent]{},
 		OnProxy1Validate:           &hook.Hook[*Proxy1Event]{},
 		OnProxy1Create:             &hook.Hook[*Proxy1Event]{},
@@ -87,7 +90,7 @@ func NewProxyHooks(app core.App) *proxyHooks {
 	return pHooks
 }
 
-func (pHooks *proxyHooks) registerProxyHooks(app core.App) {
+func (pHooks *ProxyHooks) registerProxyHooks(app core.App) {
 	registerProxyEnrichEventHook(app.OnRecordEnrich("collection_1"), pHooks.OnProxy1Enrich)
 	registerProxyEventHook(app.OnRecordValidate("collection_1"), pHooks.OnProxy1Validate)
 	registerProxyEventHook(app.OnRecordCreate("collection_1"), pHooks.OnProxy1Create)
