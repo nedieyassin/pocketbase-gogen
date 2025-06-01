@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/snonky/pocketbase-gogen/generator"
@@ -35,7 +36,10 @@ func init() {
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, err := fmt.Fprintln(os.Stderr, err)
+		if err != nil {
+			return
+		}
 		os.Exit(1)
 	}
 }
@@ -97,6 +101,11 @@ func importSchema(dataSourcePath string) []*core.Collection {
 	} else {
 		collections, err = generator.ParseSchemaJson(dataSourcePath, false)
 	}
+
 	errCheck(err)
+	sort.Slice(collections, func(i, j int) bool {
+		return collections[i].Name < collections[j].Name
+	})
+
 	return collections
 }

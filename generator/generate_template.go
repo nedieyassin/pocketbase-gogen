@@ -89,7 +89,7 @@ func (t *SchemaTranslator) collectionToStruct(collection *core.Collection) (*ast
 func (t *SchemaTranslator) translateFields(collection *core.Collection) (*ast.FieldList, error) {
 	fields := make([]*ast.Field, len(collection.Fields))
 	for i, f := range collection.Fields {
-		translated, err := t.translateField(f)
+		translated, err := t.translateField(collection, f)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func (t *SchemaTranslator) translateFields(collection *core.Collection) (*ast.Fi
 	return fieldList, nil
 }
 
-func (t *SchemaTranslator) translateField(field core.Field) (*ast.Field, error) {
+func (t *SchemaTranslator) translateField(col *core.Collection, field core.Field) (*ast.Field, error) {
 	fieldName := field.GetName()
 
 	if fieldName == "id" {
@@ -122,7 +122,7 @@ func (t *SchemaTranslator) translateField(field core.Field) (*ast.Field, error) 
 		return nil, err
 	}
 
-	fieldDoc, err := createFieldDoc(field)
+	fieldDoc, err := createFieldDoc(col, field)
 	if err != nil {
 		return nil, err
 	}
@@ -183,9 +183,9 @@ func (t *SchemaTranslator) goType(field core.Field) ast.Expr {
 	return fieldType
 }
 
-func createFieldDoc(field core.Field) (*ast.CommentGroup, error) {
+func createFieldDoc(col *core.Collection, field core.Field) (*ast.CommentGroup, error) {
 	comments := make([]*ast.Comment, 0, 1)
-	selectComment, err := createSelectTypeComment(field)
+	selectComment, err := createSelectTypeComment(col, field)
 	if err != nil {
 		return nil, err
 	}
@@ -199,12 +199,12 @@ func createFieldDoc(field core.Field) (*ast.CommentGroup, error) {
 	return doc, nil
 }
 
-func createSelectTypeComment(field core.Field) (*ast.Comment, error) {
+func createSelectTypeComment(col *core.Collection, field core.Field) (*ast.Comment, error) {
 	selectField, ok := field.(*core.SelectField)
 	if !ok {
 		return nil, nil
 	}
-	selectTypeName := strcase.ToCamel(selectField.Name) + "SelectType"
+	selectTypeName := strcase.ToCamel(col.Name) + strcase.ToCamel(selectField.Name) + "Options"
 	selectOptions := selectField.Values
 
 	var sb strings.Builder
@@ -224,6 +224,18 @@ func createSelectTypeComment(field core.Field) (*ast.Comment, error) {
 		}
 	}
 	sb.WriteString(")")
+	sb.WriteString("[")
+	for i, o := range selectOptions {
+		o, err := validateIdentifier(strcase.ToCamel(col.Name) + strcase.ToCamel(selectField.Name) + o)
+		if err != nil {
+			return nil, err
+		}
+		sb.WriteString(o)
+		if i < len(selectOptions)-1 {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("]")
 
 	comment := &ast.Comment{Text: sb.String()}
 	return comment, nil

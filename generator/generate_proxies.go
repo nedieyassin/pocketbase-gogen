@@ -109,12 +109,31 @@ func proxiesFromGoTemplate(p *Parser) ([]ast.Decl, error) {
 	}
 
 	decls := make([]ast.Decl, 0, 25)
+	var fset = token.NewFileSet()
 	for _, s := range p.structSpecs {
 		structName := s.Name.Name
 		fields := p.structFields[structName]
 
+		startComment := &ast.Comment{
+			Slash: token.Pos(fset.Base()),
+			Text:  fmt.Sprintf("// %s ------------------------------------------------------------------------------------------------------------------ ", structName),
+		}
+		startCommentGroup := &ast.CommentGroup{
+			List: []*ast.Comment{startComment},
+		}
+
 		decls = append(decls, createSelectTypes(fields)...)
-		decls = append(decls, newProxyDecl(structName, s.Doc))
+
+		var finalDoc *ast.CommentGroup
+		if s.Doc != nil {
+			finalDoc = &ast.CommentGroup{
+				List: append(startCommentGroup.List, s.Doc.List...),
+			}
+		} else {
+			finalDoc = startCommentGroup
+		}
+
+		decls = append(decls, newProxyDecl(structName, finalDoc))
 
 		methods := proxyMethods[structName]
 		decls = append(decls, methods...)
@@ -166,24 +185,24 @@ type Parser struct {
 }
 
 func NewTemplateParser(sourceCode []byte) (*Parser, error) {
-	parser := &Parser{
+	p := &Parser{
 		sourceCode:           sourceCode,
 		newNames:             map[string]any{},
 		selectTypeToOptions:  map[string][]string{},
 		selectTypeToVarNames: map[string][]string{},
 	}
-	if err := parser.parseFile(); err != nil {
+	if err := p.parseFile(); err != nil {
 		return nil, err
 	}
 
-	parser.collectStructSpecs()
-	if err := parser.collectStructFields(); err != nil {
+	p.collectStructSpecs()
+	if err := p.collectStructFields(); err != nil {
 		return nil, err
 	}
-	parser.collectStructMethods()
-	parser.findCollectionNames()
+	p.collectStructMethods()
+	p.findCollectionNames()
 
-	return parser, nil
+	return p, nil
 }
 
 func (p *Parser) parseFile() error {
