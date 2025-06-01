@@ -109,31 +109,13 @@ func proxiesFromGoTemplate(p *Parser) ([]ast.Decl, error) {
 	}
 
 	decls := make([]ast.Decl, 0, 25)
-	var fset = token.NewFileSet()
 	for _, s := range p.structSpecs {
+
 		structName := s.Name.Name
 		fields := p.structFields[structName]
 
-		startComment := &ast.Comment{
-			Slash: token.Pos(fset.Base()),
-			Text:  fmt.Sprintf("// %s ------------------------------------------------------------------------------------------------------------------ ", structName),
-		}
-		startCommentGroup := &ast.CommentGroup{
-			List: []*ast.Comment{startComment},
-		}
-
 		decls = append(decls, createSelectTypes(fields)...)
-
-		var finalDoc *ast.CommentGroup
-		if s.Doc != nil {
-			finalDoc = &ast.CommentGroup{
-				List: append(startCommentGroup.List, s.Doc.List...),
-			}
-		} else {
-			finalDoc = startCommentGroup
-		}
-
-		decls = append(decls, newProxyDecl(structName, finalDoc))
+		decls = append(decls, newProxyDecl(structName, s.Doc))
 
 		methods := proxyMethods[structName]
 		decls = append(decls, methods...)
@@ -692,6 +674,7 @@ func createSelectTypes(fields []*Field) []ast.Decl {
 			newSelectConstDecl(f),
 			newSelectMapDecl(f, true),
 			newSelectMapDecl(f, false),
+			newGetOptionFunction(f),
 		)
 	}
 

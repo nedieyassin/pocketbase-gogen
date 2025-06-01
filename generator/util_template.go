@@ -2,8 +2,7 @@ package generator
 
 // DO NOT EDIT
 // (unless you know what you are doing of course)
-var utilTemplateCode = 
-`package template
+var utilTemplateCode = `package template
 
 type Proxy interface {}
 
@@ -49,7 +48,7 @@ type ProxyP[P Proxy] interface {
 // Returns the collection name of a proxy type
 //
 //  collectionName := CName[ProxyType]()
-func CName[P Proxy, PP ProxyP[P]]() string {
+func CollectionNameOf[P Proxy, PP ProxyP[P]]() string {
 	return PP.CollectionName(nil)
 }
 
@@ -82,6 +81,22 @@ func WrapRecord[P Proxy, PP ProxyP[P]](record *core.Record) (PP, error) {
 	var p PP = &P{}
 	p.SetProxyRecord(record)
 	return p, nil
+}
+
+func WrapRecords[P Proxy, PP ProxyP[P]](records []*core.Record) ([]PP, error) {
+	var ms []PP
+	for _, record := range records {
+		collectionName := record.Collection().Name
+		proxyCollectionName := PP.CollectionName(nil)
+		if collectionName != proxyCollectionName {
+			return nil, errors.New("the generic proxy type is not of the same collection as the given record")
+		}
+		var p PP = &P{}
+		p.SetProxyRecord(record)
+		ms = append(ms, p)
+	}
+
+	return ms, nil
 }
 
 type RelationField struct {

@@ -32,6 +32,7 @@ func utilsFromTemplate(parser *Parser) []ast.Decl {
 		collectionNameUtilTemplate,
 		newProxyUtilTemplate,
 		wrapRecordUtilTemplate,
+		wrapRecordsUtilTemplate,
 		relationFieldStructTemplate,
 		createRelationMapDecl(structNames, parser),
 	}

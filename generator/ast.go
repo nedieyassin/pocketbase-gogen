@@ -48,6 +48,7 @@ var (
 	collectionNameUtilTemplate,
 	newProxyUtilTemplate,
 	wrapRecordUtilTemplate *ast.FuncDecl
+	wrapRecordsUtilTemplate *ast.FuncDecl
 
 	relationFieldStructTemplate,
 	relationMapTemplate *ast.GenDecl
@@ -174,8 +175,9 @@ func loadTemplateASTs() error {
 	collectionNameUtilTemplate = f.Decls[2].(*ast.FuncDecl)
 	newProxyUtilTemplate = f.Decls[3].(*ast.FuncDecl)
 	wrapRecordUtilTemplate = f.Decls[4].(*ast.FuncDecl)
-	relationFieldStructTemplate = f.Decls[5].(*ast.GenDecl)
-	relationMapTemplate = f.Decls[6].(*ast.GenDecl)
+	wrapRecordsUtilTemplate = f.Decls[5].(*ast.FuncDecl)
+	relationFieldStructTemplate = f.Decls[6].(*ast.GenDecl)
+	relationMapTemplate = f.Decls[7].(*ast.GenDecl)
 
 	return nil
 }
@@ -475,6 +477,7 @@ func newSelectTypeDecl(name string) *ast.GenDecl {
 		Specs: []ast.Spec{spec},
 		Tok:   token.TYPE,
 	}
+
 	return decl
 }
 
@@ -510,6 +513,71 @@ func newSelectConstDecl(field *Field) *ast.GenDecl {
 	decl := &ast.GenDecl{Specs: specs, Tok: token.CONST}
 
 	return decl
+}
+
+func newGetOptionFunction(field *Field) *ast.FuncDecl {
+	typeName := field.selectTypeName
+	funcName := "Get" + typeName
+	mapName := selectIotaMapName(typeName)
+
+	return &ast.FuncDecl{
+		Name: ast.NewIdent(funcName),
+		Type: &ast.FuncType{
+			Params: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Names: []*ast.Ident{ast.NewIdent("option")},
+						Type:  ast.NewIdent(typeName),
+					},
+				},
+			},
+			Results: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Type: ast.NewIdent("string"),
+					},
+				},
+			},
+		},
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.AssignStmt{
+					Lhs: []ast.Expr{
+						ast.NewIdent("i"),
+						ast.NewIdent("ok"),
+					},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{
+						&ast.IndexExpr{
+							X:     ast.NewIdent(mapName),
+							Index: ast.NewIdent("option"),
+						},
+					},
+				},
+				&ast.IfStmt{
+					Cond: &ast.UnaryExpr{
+						Op: token.NOT,
+						X:  ast.NewIdent("ok"),
+					},
+					Body: &ast.BlockStmt{
+						List: []ast.Stmt{
+							&ast.ExprStmt{
+								X: &ast.CallExpr{
+									Fun:  ast.NewIdent("panic"),
+									Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING, Value: `"Unknown select value"`}},
+								},
+							},
+						},
+					},
+				},
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						ast.NewIdent("i"),
+					},
+				},
+			},
+		},
+	}
 }
 
 func newSelectMapDecl(field *Field, invertMapping bool) *ast.GenDecl {
