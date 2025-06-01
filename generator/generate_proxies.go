@@ -675,6 +675,7 @@ func createSelectTypes(fields []*Field) []ast.Decl {
 			newSelectMapDecl(f, true),
 			newSelectMapDecl(f, false),
 			newGetOptionFunction(f),
+			newGetOptionValueFunction(f),
 		)
 	}
 

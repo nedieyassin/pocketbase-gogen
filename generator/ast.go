@@ -580,6 +580,71 @@ func newGetOptionFunction(field *Field) *ast.FuncDecl {
 	}
 }
 
+func newGetOptionValueFunction(field *Field) *ast.FuncDecl {
+	typeName := field.selectTypeName
+	funcName := "Get" + typeName + "Value"
+	mapName := selectNameMapName(typeName)
+
+	return &ast.FuncDecl{
+		Name: ast.NewIdent(funcName),
+		Type: &ast.FuncType{
+			Params: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Names: []*ast.Ident{ast.NewIdent("value")},
+						Type:  ast.NewIdent("string"),
+					},
+				},
+			},
+			Results: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Type: ast.NewIdent(typeName),
+					},
+				},
+			},
+		},
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.AssignStmt{
+					Lhs: []ast.Expr{
+						ast.NewIdent("i"),
+						ast.NewIdent("ok"),
+					},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{
+						&ast.IndexExpr{
+							X:     ast.NewIdent(mapName),
+							Index: ast.NewIdent("value"),
+						},
+					},
+				},
+				&ast.IfStmt{
+					Cond: &ast.UnaryExpr{
+						Op: token.NOT,
+						X:  ast.NewIdent("ok"),
+					},
+					Body: &ast.BlockStmt{
+						List: []ast.Stmt{
+							&ast.ExprStmt{
+								X: &ast.CallExpr{
+									Fun:  ast.NewIdent("panic"),
+									Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING, Value: `"Unknown select value"`}},
+								},
+							},
+						},
+					},
+				},
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						ast.NewIdent("i"),
+					},
+				},
+			},
+		},
+	}
+}
+
 func newSelectMapDecl(field *Field, invertMapping bool) *ast.GenDecl {
 	typeName := field.selectTypeName
 	options := field.selectOptions
