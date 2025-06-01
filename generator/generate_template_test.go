@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/snonky/pocketbase-gogen/generator"
+	. "github.com/nedieyassin/pocketbase-gogen/generator"
 )
 
 var expectedAuthCollectionStruct = `type AuthCollection struct {

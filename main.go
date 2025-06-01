@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/snonky/pocketbase-gogen/cmd"
+	"github.com/nedieyassin/pocketbase-gogen/cmd"
 )
 
 func main() {

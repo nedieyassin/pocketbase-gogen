@@ -3,7 +3,7 @@ package generator_test
 import (
 	"testing"
 
-	. "github.com/snonky/pocketbase-gogen/generator"
+	. "github.com/nedieyassin/pocketbase-gogen/generator"
 )
 
 func TestProxyHooksGeneration(t *testing.T) {

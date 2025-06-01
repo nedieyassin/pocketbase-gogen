@@ -1,4 +1,4 @@
-module github.com/snonky/pocketbase-gogen
+module github.com/nedieyassin/pocketbase-gogen
 
 go 1.23.5
 

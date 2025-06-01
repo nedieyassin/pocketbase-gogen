@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nedieyassin/pocketbase-gogen/generator"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/snonky/pocketbase-gogen/generator"
 	"github.com/spf13/cobra"
 )
 
